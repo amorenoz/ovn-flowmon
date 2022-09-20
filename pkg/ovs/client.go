@@ -104,6 +104,10 @@ type OVSClient struct {
 func (o *OVSClient) Close() error {
 	bridges := []Bridge{}
 
+	if !o.client.Connected() {
+		return nil
+	}
+
 	if err := o.client.List(&bridges); err != nil {
 		return err
 	}

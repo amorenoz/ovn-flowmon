@@ -1,10 +1,11 @@
-package main
+package cmd
 
 import (
 	"context"
-	"flag"
+	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 
@@ -18,6 +19,7 @@ import (
 	flowmessage "github.com/netsampler/goflow2/pb"
 	"github.com/rivo/tview"
 	"github.com/sirupsen/logrus"
+	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -26,13 +28,37 @@ var (
 	flowTable   *view.FlowTable
 	statsViewer *stats.StatsView
 	ovsClient   *ovs.OVSClient
+	log         = logrus.New()
+	logLevel    string
+	ovsdb       string
 
 	fieldList []string = []string{"InIf", "OutIf", "SrcMac", "DstMac", "VlanID", "Etype", "SrcAddr", "DstAddr", "Proto", "SrcPort", "DstPort", "FlowDirection"}
-	ovsdb              = flag.String("ovsdb", "", "Enable OVS configuration by providing a database string, e.g: unix:/var/run/openvswitch/db.sock")
-	iface              = flag.String("iface", "", "Interface name where to listen. If ovsdb configuration is enabled"+
-		"The IPv4 address of this interface will be used as target, so make sure the remote vswitchd can reach it")
-	logLevel = flag.String("loglevel", "info", "Log level")
-	log      = logrus.New()
+
+	rootCmd = &cobra.Command{
+		Use:   "ovs-flowmon",
+		Short: "ovs-flowmon is an interactive IPFIX flow visualizer specially supporting OVS/OVN",
+		Long: `An interactive IPFIX collector and visualization tool. Although it can work with any IPFIX exporter,
+it supports configuring OVS IPFIX sampling and statistics.`,
+		Run: func(cmd *cobra.Command, args []string) {
+		},
+	}
+
+	listenCmd = &cobra.Command{
+		Use:   "listen [host:port]",
+		Short: "Listen to exisiting IPFIX traffic",
+		Long:  "An IPFIX exporter muxt be configured manually. Default listen address is: *:2055.",
+		Run:   run_listen,
+		Args:  cobra.MaximumNArgs(1),
+	}
+
+	ovsCmd = &cobra.Command{
+		Use:   "ovs [target]",
+		Short: "Configure a local or remote ovs-vswitchd",
+		Long: `Configure per-bridge IPFIX sampling on a local or remote ovs-vswitchd daemon. This mode allows you to also visualize life OvS statistics.
+The target must be specified in "Connection Methods" (man(7) ovsdb). Default is: unix:/var/run/openvswitch/db.sock`,
+		Run:  run_ovs,
+		Args: cobra.MaximumNArgs(1),
+	}
 )
 
 // Implements goflow2.transport.TransportDriver
@@ -66,30 +92,31 @@ type Listener interface {
 	OnNewFlow(flow *flowmessage.FlowMessage)
 }
 
-func ipAddressFromOvsdb(ovsdb string) string {
+func ipAddressFromOvsdb(ovsdb string) (string, error) {
 	parts := strings.Split(ovsdb, ":")
 	switch parts[0] {
 	case "tcp":
 		conn, err := net.Dial("tcp", strings.Join(parts[1:], ":"))
 		if err != nil {
-			panic(err)
+			return "", fmt.Errorf("Failed to connect to remote OvS at %s", ovsdb)
 		}
-		return strings.Split(conn.LocalAddr().String(), ":")[0]
+		return strings.Split(conn.LocalAddr().String(), ":")[0], nil
 	case "unix":
-		return "127.0.0.1"
+		if _, err := os.Stat(parts[1]); errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("OvS socket file does not exist: %s", parts[1])
+		}
+		return "127.0.0.1", nil
+	default:
+		return "", fmt.Errorf("Unsupported OvS target. Only unix and tcp are supported")
 	}
-	return ""
 }
 
-func welcomePage(pages *tview.Pages) {
+func welcomePage(pages *tview.Pages, message string) {
 	welcome := tview.NewModal().SetText(`
 
 Welcome to OvS Flow Monitor!
 
-If an OvS vSwitch is present, you can start, stop and reconfigure the IPFIX Exporter from the main menu. If not, please start an IPFIX Exporter that sends flows to tcp::2055.
-
-Note that if you had already started the IPFIX exporter, it might take some time (e.g: 10mins in OvS) before it sends us the Templates, without which we cannot
-decode the IPFIX Flow Records. It is possible that re-starting the exporter helps.
+` + message + `
 
 
 `).AddButtons([]string{"Start"}).SetDoneFunc(func(index int, label string) {
@@ -157,7 +184,7 @@ func mainPage(pages *tview.Pages) {
 		})
 	}
 
-	if *ovsdb != "" {
+	if ovsdb != "" {
 		menuList.AddItem("Start OvS IPFIX Exporter", "", 's', func() {
 			ovs_start("br-int", ovs.DefaultSampling, ovs.DefaultCacheMax, ovs.DefaultActiveTimeout)
 		})
@@ -202,11 +229,11 @@ func center(p tview.Primitive, width, height int) tview.Primitive {
 }
 func configPage(pages *tview.Pages) {
 	var err error
-	if *ovsdb == "" {
+	if ovsdb == "" {
 		return
 	}
 	// Initialize OVS Configuration client
-	ovsClient, err = ovs.NewOVSClient(*ovsdb, statsViewer, log)
+	ovsClient, err = ovs.NewOVSClient(ovsdb, statsViewer, log)
 	if err != nil {
 		fmt.Print(err)
 		log.Fatal(err)
@@ -260,7 +287,7 @@ func ovs_stop() {
 }
 
 func ovs_start(bridge string, sampling, cacheMax, cacheTimeout int) {
-	if *ovsdb == "" {
+	if ovsdb == "" {
 		log.Error("OVSDB not configured")
 		return
 	}
@@ -276,8 +303,11 @@ func ovs_start(bridge string, sampling, cacheMax, cacheTimeout int) {
 			log.Fatal(err)
 		}
 	}
-	target := ipAddressFromOvsdb(*ovsdb) + ":2055"
-	err := ovsClient.SetIPFIX(bridge, target, sampling, cacheMax, cacheTimeout)
+	ipAddr, err := ipAddressFromOvsdb(ovsdb)
+	if err != nil {
+		log.Fatalf("Bad OvS target %s", err.Error())
+	}
+	err = ovsClient.SetIPFIX(bridge, ipAddr+":2055", sampling, cacheMax, cacheTimeout)
 	if err != nil {
 		log.Error("Failed to set OVS configuration")
 		log.Error(err)
@@ -294,11 +324,39 @@ func exit() {
 	}
 }
 
-func main() {
-	flag.Parse()
-	lvl, _ := logrus.ParseLevel(*logLevel)
-	log.SetLevel(lvl)
+// Execute executes the root command.
+func Execute() error {
+	return rootCmd.Execute()
+}
 
+//func main() {
+func init() {
+	cobra.OnInitialize(initConfig)
+	rootCmd.PersistentFlags().StringVarP(&logLevel, "loglevel", "l", "info", "Log level")
+
+	// listen
+	rootCmd.AddCommand(listenCmd)
+
+	// ovs
+	rootCmd.AddCommand(ovsCmd)
+
+}
+
+func initConfig() {
+	lvl, _ := logrus.ParseLevel(logLevel)
+	log.SetLevel(lvl)
+}
+
+func run_ovs(cmd *cobra.Command, args []string) {
+	if len(args) == 1 {
+		ovsdb = args[0]
+	} else {
+		ovsdb = "unix:/var/run/openvswitch/db.sock"
+	}
+	ipAddr, err := ipAddressFromOvsdb(ovsdb)
+	if err != nil {
+		log.Fatalf("Bad OvS target %s", err.Error())
+	}
 	app = tview.NewApplication()
 	pages := tview.NewPages()
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
@@ -310,15 +368,52 @@ func main() {
 
 	mainPage(pages)
 	configPage(pages)
-	welcomePage(pages)
+	welcomePage(pages, `In "ovs" mode you'll be able to configure OvS IPFIX sampling as well as to visualize live OvS statistics`)
 
 	app.SetRoot(pages, true).SetFocus(pages)
 
-	ipAddress := ""
-	if *ovsdb != "" {
-		ipAddress = ipAddressFromOvsdb(*ovsdb)
+	nf, err := netflow.NewNFReader(&Dispatcher{flowTable: flowTable}, 1, "netflow://"+ipAddr+":2055", log)
+	if err != nil {
+		log.Fatal(err)
 	}
-	nf, err := netflow.NewNFReader(&Dispatcher{flowTable: flowTable}, 1, "netflow://"+ipAddress+":2055", log)
+	go nf.Listen()
+
+	if err := app.Run(); err != nil {
+		panic(err)
+	}
+}
+
+func run_listen(cmd *cobra.Command, args []string) {
+	ipPort := ":2055"
+	if len(args) == 1 {
+		ipPort = args[0]
+	}
+	app = tview.NewApplication()
+	pages := tview.NewPages()
+	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyCtrlC {
+			exit()
+		}
+		return event
+	})
+
+	mainPage(pages)
+	configPage(pages)
+	welcomePage(pages, `In "listen" mode you must manually start an IPFIX exporter to send flows to this host.
+In OpenvSwitch you can run something like:
+"ovs-vsctl -- set Bridge br-int ipfix=@i \
+           -- --id=@i create IPFIX targets=\"${HOST_IP}:2055\"
+
+Note that if you had already started the IPFIX exporter, it might take some time (e.g: 10mins in OvS) before it sends us the Templates, without which we cannot
+decode the IPFIX Flow Records. It is possible that re-starting the exporter helps.`)
+
+	app.SetRoot(pages, true).SetFocus(pages)
+
+	do_listen(ipPort)
+}
+
+func do_listen(address string) {
+	nf, err := netflow.NewNFReader(&Dispatcher{flowTable: flowTable}, 1, "netflow://"+address, log)
 	if err != nil {
 		log.Fatal(err)
 	}
