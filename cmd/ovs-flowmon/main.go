@@ -5,19 +5,17 @@ import (
 	"flag"
 	"fmt"
 	"net"
-	"net/url"
 	"strconv"
 	"strings"
 
+	"amorenoz/ovs-flowmon/pkg/netflow"
 	"amorenoz/ovs-flowmon/pkg/ovs"
 	"amorenoz/ovs-flowmon/pkg/stats"
 	"amorenoz/ovs-flowmon/pkg/view"
 
 	"github.com/gdamore/tcell/v2"
-	"github.com/netsampler/goflow2/format"
 	_ "github.com/netsampler/goflow2/format/protobuf"
 	flowmessage "github.com/netsampler/goflow2/pb"
-	"github.com/netsampler/goflow2/utils"
 	"github.com/rivo/tview"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/protobuf/proto"
@@ -37,82 +35,7 @@ var (
 	log      = logrus.New()
 )
 
-func readFlows(flowTable *view.FlowTable) {
-	formatter, err := format.FindFormat(context.Background(), "pb")
-	if err != nil {
-		log.Fatal(err)
-	}
-	transporter := &Dispatcher{
-		flowTable: flowTable,
-	}
-	Workers := 1
-	ReusePort := false
-
-	ipAddress := ""
-	if *ovsdb != "" {
-		ipAddress = ipAddressFromOvsdb(*ovsdb)
-	}
-	listen := "netflow://" + ipAddress + ":2055"
-	log.Infof("Listening on %s", listen)
-
-	// wg.Add(1)
-	go func(listenAddress string) {
-		listenAddrUrl, err := url.Parse(listenAddress)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		hostname := listenAddrUrl.Hostname()
-		port, err := strconv.ParseUint(listenAddrUrl.Port(), 10, 64)
-		if err != nil {
-			log.Errorf("Port %s could not be converted to integer", listenAddrUrl.Port())
-			return
-		}
-
-		logFields := logrus.Fields{
-			"scheme":   listenAddrUrl.Scheme,
-			"hostname": hostname,
-			"port":     port,
-		}
-
-		log.WithFields(logFields).Info("Starting collection on " + listenAddress)
-
-		if listenAddrUrl.Scheme == "sflow" {
-			sSFlow := &utils.StateSFlow{
-				Format:    formatter,
-				Transport: transporter,
-				Logger:    log,
-			}
-			err = sSFlow.FlowRoutine(Workers, hostname, int(port), ReusePort)
-		} else if listenAddrUrl.Scheme == "netflow" {
-			sNF := &utils.StateNetFlow{
-				Format:    formatter,
-				Transport: transporter,
-				Logger:    log,
-			}
-			err = sNF.FlowRoutine(Workers, hostname, int(port), ReusePort)
-		} else if listenAddrUrl.Scheme == "nfl" {
-			sNFL := &utils.StateNFLegacy{
-				Format:    formatter,
-				Transport: transporter,
-				Logger:    log,
-			}
-			err = sNFL.FlowRoutine(Workers, hostname, int(port), ReusePort)
-		} else {
-			log.Errorf("scheme %s does not exist", listenAddrUrl.Scheme)
-			return
-		}
-
-		if err != nil {
-			log.WithFields(logFields).Fatal(err)
-		}
-
-	}(listen)
-
-	// wg.Wait()
-}
-
-// Implements TransportDriver
+// Implements goflow2.transport.TransportDriver
 type Dispatcher struct {
 	flowTable *view.FlowTable
 }
@@ -265,7 +188,6 @@ func mainPage(pages *tview.Pages) {
 
 	flex := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(menu, 0, 2, true).AddItem(flowTable.View, 0, 5, false).AddItem(status, 0, 1, false)
 
-	readFlows(flowTable)
 	pages.AddPage("main", flex, true, false)
 }
 
@@ -391,6 +313,16 @@ func main() {
 	welcomePage(pages)
 
 	app.SetRoot(pages, true).SetFocus(pages)
+
+	ipAddress := ""
+	if *ovsdb != "" {
+		ipAddress = ipAddressFromOvsdb(*ovsdb)
+	}
+	nf, err := netflow.NewNFReader(&Dispatcher{flowTable: flowTable}, 1, "netflow://"+ipAddress+":2055", log)
+	if err != nil {
+		log.Fatal(err)
+	}
+	go nf.Listen()
 
 	if err := app.Run(); err != nil {
 		panic(err)
