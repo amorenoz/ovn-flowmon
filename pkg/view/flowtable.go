@@ -37,6 +37,17 @@ var fieldList []string = []string{
 	"SvcPort",
 	"FlowDirection"}
 
+var ovnFieldList []string = []string{
+	"LFUUID",
+	"LFMatch",
+	"LFActions",
+	"LFPipeline",
+	"LFStage",
+	"DPType",
+	"DPName",
+	"OFTable",
+}
+
 // FlowConsumer implementes the netflow.Consumer interface and adds the flowmessages
 // to a FlowTable
 type FlowConsumer struct {
@@ -45,8 +56,8 @@ type FlowConsumer struct {
 }
 
 // Consume adds the flowmessage to the FlowTable
-func (fc *FlowConsumer) Consume(msg *flowmessage.FlowMessage, _ map[string]interface{}, log *logrus.Logger) {
-	fc.FlowTable.ProcessMessage(msg)
+func (fc *FlowConsumer) Consume(msg *flowmessage.FlowMessage, extra map[string]interface{}, log *logrus.Logger) {
+	fc.FlowTable.ProcessMessage(msg, extra)
 	fc.App.QueueUpdateDraw(func() {
 		fc.FlowTable.Draw()
 	})
@@ -75,10 +86,16 @@ type FlowTable struct {
 	nMessages int
 }
 
-func NewFlowTable(statsBackend stats.StatsBackend) *FlowTable {
+func NewFlowTable(statsBackend stats.StatsBackend, ovn bool) *FlowTable {
+	fields := fieldList
+	if ovn {
+		for _, field := range ovnFieldList {
+			fields = append(fields, field)
+		}
+	}
 	aggregateKeyList := []string{}
 	aggregates := map[string]bool{}
-	for _, field := range fieldList {
+	for _, field := range fields {
 		aggregateKeyList = append(aggregateKeyList, field)
 		aggregates[field] = true
 	}
@@ -99,7 +116,7 @@ func NewFlowTable(statsBackend stats.StatsBackend) *FlowTable {
 		aggregates:       make([]*flowmon.FlowAggregate, 0),
 		aggregateKeyList: aggregateKeyList,
 		aggregateKeyMap:  aggregates,
-		keys:             fieldList,
+		keys:             fields,
 		lessFunc: func(one, other *flowmon.FlowAggregate) bool {
 			return one.LastTimeReceived < other.LastTimeReceived
 		},
@@ -229,10 +246,10 @@ func (ft *FlowTable) Draw() {
 	ft.stats.Draw()
 }
 
-func (ft *FlowTable) ProcessMessage(msg *flowmessage.FlowMessage) {
+func (ft *FlowTable) ProcessMessage(msg *flowmessage.FlowMessage, extra map[string]interface{}) {
 	log.Debugf("Processing Flow Message: %+v", msg)
 
-	flowInfo := flowmon.NewFlowInfo(msg)
+	flowInfo := flowmon.NewFlowInfo(msg, extra)
 	ft.flows = append(ft.flows, flowInfo)
 
 	ft.mutex.Lock()

@@ -52,7 +52,7 @@ func (d *Dispatcher) Send(key, data []byte) error {
 		return err
 	}
 
-	var extra map[string]interface{}
+	extra := make(map[string]interface{}, 0)
 	for _, enricher := range d.enrichers {
 		extra = enricher.Enrich(&msg, extra, d.log)
 	}

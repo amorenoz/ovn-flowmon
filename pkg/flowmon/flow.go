@@ -123,6 +123,16 @@ type FlowKey struct {
 	TCPFlags HexUint32
 	ICMPType HexUint32
 	ICMPCode HexUint32
+
+	// OVN Extra information
+	LFUUID     string
+	LFMatch    string
+	LFActions  string
+	LFPipeline string
+	LFStage    string
+	DPType     string
+	DPName     string
+	OFTable    DecUint32
 }
 
 // GetFieldString returns the string representation of the given fieldName
@@ -165,6 +175,34 @@ func (fk *FlowKey) Matches(other *FlowKey, mask []string) (bool, error) {
 	return true, nil
 }
 
+// Fills extra information from map. Supported extra info: OVN.
+func (fk *FlowKey) fillExtra(extra map[string]interface{}) {
+	if data, ok := extra["LFUUID"]; ok {
+		fk.LFUUID = data.(string)
+	}
+	if data, ok := extra["LFMatch"]; ok {
+		fk.LFMatch = data.(string)
+	}
+	if data, ok := extra["LFAction"]; ok {
+		fk.LFActions = data.(string)
+	}
+	if data, ok := extra["LFPipeline"]; ok {
+		fk.LFPipeline = data.(string)
+	}
+	if data, ok := extra["LFStage"]; ok {
+		fk.LFStage = data.(string)
+	}
+	if data, ok := extra["DPType"]; ok {
+		fk.DPType = data.(string)
+	}
+	if data, ok := extra["DPName"]; ok {
+		fk.DPName = data.(string)
+	}
+	if data, ok := extra["OFTable"]; ok {
+		fk.OFTable = DecUint32(data.(int))
+	}
+}
+
 func macFromUint64(uintMac uint64) net.HardwareAddr {
 	mac := make([]byte, 8)
 	binary.BigEndian.PutUint64(mac, uintMac)
@@ -190,26 +228,28 @@ type FlowInfo struct {
 	ForwardingStatus uint32
 }
 
-func NewFlowInfo(msg *flowmessage.FlowMessage) *FlowInfo {
+func NewFlowInfo(msg *flowmessage.FlowMessage, extra map[string]interface{}) *FlowInfo {
+	key := &FlowKey{
+		FlowDirection: FlowDirection(msg.FlowDirection),
+		InIf:          DecUint32(msg.InIf),
+		OutIf:         DecUint32(msg.OutIf),
+		SrcMac:        macFromUint64(msg.SrcMac),
+		DstMac:        macFromUint64(msg.DstMac),
+		Etype:         Etype(msg.Etype),
+		VlanID:        DecUint32(msg.VlanId),
+		SrcAddr:       ipFromBytes(msg.SrcAddr),
+		DstAddr:       ipFromBytes(msg.DstAddr),
+		Proto:         Proto(msg.Proto),
+		SrcPort:       DecUint32(msg.SrcPort),
+		DstPort:       DecUint32(msg.DstPort),
+		SvcPort:       servicePort(msg),
+		TCPFlags:      HexUint32(msg.TCPFlags),
+		ICMPType:      HexUint32(msg.IcmpType),
+		ICMPCode:      HexUint32(msg.IcmpCode),
+	}
+	key.fillExtra(extra)
 	return &FlowInfo{
-		Key: &FlowKey{
-			FlowDirection: FlowDirection(msg.FlowDirection),
-			InIf:          DecUint32(msg.InIf),
-			OutIf:         DecUint32(msg.OutIf),
-			SrcMac:        macFromUint64(msg.SrcMac),
-			DstMac:        macFromUint64(msg.DstMac),
-			Etype:         Etype(msg.Etype),
-			VlanID:        DecUint32(msg.VlanId),
-			SrcAddr:       ipFromBytes(msg.SrcAddr),
-			DstAddr:       ipFromBytes(msg.DstAddr),
-			Proto:         Proto(msg.Proto),
-			SrcPort:       DecUint32(msg.SrcPort),
-			DstPort:       DecUint32(msg.DstPort),
-			SvcPort:       servicePort(msg),
-			TCPFlags:      HexUint32(msg.TCPFlags),
-			ICMPType:      HexUint32(msg.IcmpType),
-			ICMPCode:      HexUint32(msg.IcmpCode),
-		},
+		Key:              key,
 		TimeReceived:     DecUint64(msg.TimeReceived),
 		TimeFlowStart:    DecUint64(msg.TimeFlowStart),
 		TimeFlowEnd:      DecUint64(msg.TimeFlowEnd),

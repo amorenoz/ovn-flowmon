@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"amorenoz/ovs-flowmon/pkg/netflow"
+	"amorenoz/ovs-flowmon/pkg/ovn"
 	"amorenoz/ovs-flowmon/pkg/ovs"
 	"amorenoz/ovs-flowmon/pkg/stats"
 	"amorenoz/ovs-flowmon/pkg/view"
@@ -55,6 +56,13 @@ The target must be specified in "Connection Methods" (man(7) ovsdb). Default is:
 		Run:  run_ovs,
 		Args: cobra.MaximumNArgs(1),
 	}
+
+	ovnCmd = &cobra.Command{
+		Use:   "ovn",
+		Short: "Configure and visualize OVN debug-mode (experimental)",
+		Long:  `In this mode ovs-flowmon connects to a OVN control plane. It configures OVN's debug-mode and drop sampling. Then it enriches each flow with OVN data extracted from the IPFIX sample`,
+		Run:   run_ovn,
+	}
 )
 
 type Listener interface {
@@ -95,9 +103,9 @@ Welcome to OvS Flow Monitor!
 	pages.AddPage("welcome", welcome, true, true)
 }
 
-func mainPage(pages *tview.Pages) {
+func mainPage(pages *tview.Pages, ovn bool) {
 	statsViewer = stats.NewStatsView(app)
-	flowTable = view.NewFlowTable(statsViewer)
+	flowTable = view.NewFlowTable(statsViewer, ovn)
 	status := tview.NewTextView().SetText("Stopped. Press Start to start capturing\n")
 	log.SetOutput(status)
 
@@ -302,14 +310,79 @@ func init() {
 	// listen
 	rootCmd.AddCommand(listenCmd)
 
-	// ovs
+	// OVS
 	rootCmd.AddCommand(ovsCmd)
 
+	// OVN
+	rootCmd.AddCommand(ovnCmd)
+	ovnCmd.Flags().StringP("nbdb", "n", "unix:/var/run/ovn/ovnnb_db.sock", "OVN NB database connection")
+	ovnCmd.Flags().StringP("sbdb", "s", "unix:/var/run/ovn/ovnsb_db.sock", "OVN SB database connection") // TODO Override with OVN_NB_DB and OVN_SB_DB and OVN_RUNDIR
+	//ovnCmd.Flags().StringP("ovs", "o", "", "Optional OVS DB to configure")
 }
 
 func initConfig() {
 	lvl, _ := logrus.ParseLevel(logLevel)
 	log.SetLevel(lvl)
+}
+
+func run_ovn(cmd *cobra.Command, args []string) {
+	nb, err := cmd.Flags().GetString("nbdb")
+	if err != nil {
+		log.Fatal(err)
+	}
+	sb, err := cmd.Flags().GetString("sbdb")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ovnClient, err := ovn.NewOVNClient(nb, sb, log)
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = ovnClient.Start()
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = ovnClient.SetDebugMode()
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Info("OVN Client started")
+
+	app = tview.NewApplication()
+	pages := tview.NewPages()
+	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyCtrlC {
+			exit()
+		}
+		return event
+	})
+
+	mainPage(pages, true)
+	//configPage(pages)
+	welcomePage(pages, `OVN mode. Drop sampling has been enabled in the remote OVN cluster.
+However, IPFIX configuration needs to be added to each chassis that you want to sample. To do that, run the following command on them:
+
+ovs-vsctl --id=@br get Bridge br-int --
+	  --id=@i create IPFIX targets=\"${HOST_IP}:2055\"
+	  --  create Flow_Sample_Collector_Set bridge=@br id=1 ipfix=@i
+`)
+
+	app.SetRoot(pages, true).SetFocus(pages)
+	ipAddr := ""
+	nf, err := netflow.NewNFReader(1,
+		"netflow://"+ipAddr+":2055",
+		&view.FlowConsumer{FlowTable: flowTable, App: app},
+		[]netflow.Enricher{ovnClient},
+		log)
+	if err != nil {
+		log.Fatal(err)
+	}
+	go nf.Listen()
+
+	if err := app.Run(); err != nil {
+		panic(err)
+	}
 }
 
 func run_ovs(cmd *cobra.Command, args []string) {
@@ -331,7 +404,7 @@ func run_ovs(cmd *cobra.Command, args []string) {
 		return event
 	})
 
-	mainPage(pages)
+	mainPage(pages, false)
 	configPage(pages)
 	welcomePage(pages, `In "ovs" mode you'll be able to configure OvS IPFIX sampling as well as to visualize live OvS statistics`)
 
@@ -366,8 +439,8 @@ func run_listen(cmd *cobra.Command, args []string) {
 		return event
 	})
 
-	mainPage(pages)
-	configPage(pages)
+	mainPage(pages, false)
+	//configPage(pages)
 	welcomePage(pages, `In "listen" mode you must manually start an IPFIX exporter to send flows to this host.
 In OpenvSwitch you can run something like:
 "ovs-vsctl -- set Bridge br-int ipfix=@i \
