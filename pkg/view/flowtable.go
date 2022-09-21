@@ -86,41 +86,46 @@ type FlowTable struct {
 	nMessages int
 }
 
-func NewFlowTable(statsBackend stats.StatsBackend, ovn bool) *FlowTable {
+func NewFlowTable() *FlowTable {
 	fields := fieldList
-	if ovn {
-		for _, field := range ovnFieldList {
-			fields = append(fields, field)
-		}
-	}
-	aggregateKeyList := []string{}
-	aggregates := map[string]bool{}
-	for _, field := range fields {
-		aggregateKeyList = append(aggregateKeyList, field)
-		aggregates[field] = true
-	}
 	tableView := tview.NewTable().
 		SetSelectable(true, false). // Allow flows to be selected
 		SetFixed(1, 1).             // Make it always focus the top left
 		SetSelectable(true, false)  // Start in RowMode
 
-	if statsBackend != nil {
-		statsBackend.RegisterStat(ProcessedMessagesStat)
-	}
-
-	return &FlowTable{
+	ft := &FlowTable{
 		View:             tableView,
-		stats:            statsBackend,
+		stats:            nil,
 		mutex:            sync.RWMutex{},
 		flows:            make([]*flowmon.FlowInfo, 0),
 		aggregates:       make([]*flowmon.FlowAggregate, 0),
-		aggregateKeyList: aggregateKeyList,
-		aggregateKeyMap:  aggregates,
+		aggregateKeyList: nil,
+		aggregateKeyMap:  nil,
 		keys:             fields,
 		lessFunc: func(one, other *flowmon.FlowAggregate) bool {
 			return one.LastTimeReceived < other.LastTimeReceived
 		},
 	}
+	ft.updateFieldsLocked()
+	return ft
+}
+
+func (ft *FlowTable) SetStatsBackend(statsBackend stats.StatsBackend) *FlowTable {
+	statsBackend.RegisterStat(ProcessedMessagesStat)
+	ft.stats = statsBackend
+	return ft
+}
+
+func (ft *FlowTable) SetOVN(ovn bool) *FlowTable {
+	if ovn {
+		for _, field := range ovnFieldList {
+			ft.keys = append(ft.keys, field)
+		}
+	}
+	ft.mutex.Lock()
+	defer ft.mutex.Unlock()
+	ft.updateFieldsLocked()
+	return ft
 }
 
 func (ft *FlowTable) GetAggregates() map[string]bool {
@@ -287,18 +292,6 @@ func (ft *FlowTable) ProcessFlow(flowInfo *flowmon.FlowInfo) {
 	}
 }
 
-func (ft *FlowTable) insertSortedAggregate(agg *flowmon.FlowAggregate) {
-	insertionPoint := sort.Search(len(ft.aggregates), func(i int) bool {
-		return ft.lessFunc(ft.aggregates[i], agg)
-	})
-	if insertionPoint == len(ft.aggregates) {
-		ft.aggregates = append(ft.aggregates, agg)
-	} else {
-		ft.aggregates = append(ft.aggregates[0:insertionPoint],
-			append([]*flowmon.FlowAggregate{agg}, ft.aggregates[insertionPoint:]...)...)
-	}
-}
-
 // SetSortingKey sets the field that will be used for sorting the aggregates
 func (ft *FlowTable) SetSortingColumn(index int) error {
 	colName := ft.View.GetCell(0, index).Text
@@ -355,10 +348,35 @@ func (ft *FlowTable) SetSortingKey(key string) error {
 	return nil
 }
 
+func (ft *FlowTable) insertSortedAggregate(agg *flowmon.FlowAggregate) {
+	insertionPoint := sort.Search(len(ft.aggregates), func(i int) bool {
+		return ft.lessFunc(ft.aggregates[i], agg)
+	})
+	if insertionPoint == len(ft.aggregates) {
+		ft.aggregates = append(ft.aggregates, agg)
+	} else {
+		ft.aggregates = append(ft.aggregates[0:insertionPoint],
+			append([]*flowmon.FlowAggregate{agg}, ft.aggregates[insertionPoint:]...)...)
+	}
+}
+
 // Recompute all aggregates
 func (ft *FlowTable) recompute() {
 	ft.aggregates = make([]*flowmon.FlowAggregate, 0)
 	for _, flow := range ft.flows {
 		ft.ProcessFlow(flow)
 	}
+}
+
+func (ft *FlowTable) updateFieldsLocked() {
+	aggregateKeyList := []string{}
+	aggregates := map[string]bool{}
+	for _, field := range ft.keys {
+		aggregateKeyList = append(aggregateKeyList, field)
+		if _, ok := aggregates[field]; !ok {
+			aggregates[field] = true
+		}
+	}
+	ft.aggregateKeyList = aggregateKeyList
+	ft.aggregateKeyMap = aggregates
 }
