@@ -59,7 +59,11 @@ func ovs_start(bridge string, sampling, cacheMax, cacheTimeout int) {
 func ovs_stop() {
 	if ovsClient != nil {
 		log.Info("Stopping IPFIX exporter")
-		err := ovsClient.Close()
+		err := ovsClient.ClearIPFIX()
+		if err != nil {
+			log.Error(err)
+		}
+		err = ovsClient.Close()
 		if err != nil {
 			log.Error(err)
 		}
@@ -149,7 +153,7 @@ func run_ovs(cmd *cobra.Command, args []string) {
 
 	view.MainPage(app, pages, menuConfig, log)
 	ovsConfigPage(pages)
-	welcomePage(pages, `In "ovs" mode you'll be able to configure OvS IPFIX sampling as well as to visualize live OvS statistics`)
+	view.WelcomePage(pages, `In "ovs" mode you'll be able to configure OvS IPFIX sampling as well as to visualize live OvS statistics`)
 
 	app.SetRoot(pages, true).SetFocus(pages)
 

@@ -101,33 +101,30 @@ type OVSClient struct {
 	log    *logrus.Logger
 }
 
-func (o *OVSClient) Close() error {
-	bridges := []Bridge{}
+func NewOVSClient(connStr string, statsBackend stats.StatsBackend, log *logrus.Logger) (*OVSClient, error) {
+	dbmodel, err := model.NewDBModel("Open_vSwitch", map[string]model.Model{
+		"Bridge":       &Bridge{},
+		"IPFIX":        &IPFIX{},
+		"Open_vSwitch": &OpenvSwitch{},
+	})
+	if err != nil {
+		return nil, err
+	}
+	logr := logrusr.New(log)
+	cli, err := client.NewOVSDBClient(dbmodel, client.WithEndpoint(connStr), client.WithLogger(&logr))
+	if err != nil {
+		return nil, err
+	}
+	return &OVSClient{
+		client: cli,
+		stats:  statsBackend,
+		log:    log,
+	}, nil
+}
 
+func (o *OVSClient) Close() error {
 	if !o.client.Connected() {
 		return nil
-	}
-
-	if err := o.client.List(&bridges); err != nil {
-		return err
-	}
-	for _, bridge := range bridges {
-		if bridge.IPFIX == nil {
-			continue
-		}
-		bridge.IPFIX = nil
-		clearOps, err := o.client.Where(&bridge).Update(&bridge, &bridge.IPFIX)
-		if err != nil {
-			o.log.Error(err)
-		} else {
-			response, err := o.client.Transact(context.TODO(), clearOps...)
-			if err != nil {
-				o.log.Error(err)
-			}
-			if opErr, err := ovsdb.CheckOperationResults(response, clearOps); err != nil {
-				o.log.Errorf("%s: %+v", err.Error(), opErr)
-			}
-		}
 	}
 	if err := o.DisableStatistics(); err != nil {
 		o.log.Error(err)
@@ -147,20 +144,9 @@ func (o *OVSClient) SetIPFIX(bridgeName, target string, sampling, cacheMax, cach
 	// Reconfigurations don't trigger a template event, to force it first delete
 	// the current IPFIX config and only then create the new one
 	bridge := &Bridge{
-		Name:  bridgeName,
-		IPFIX: nil,
+		Name: bridgeName,
 	}
-	clearOps, err := o.client.Where(bridge).Update(bridge, &bridge.IPFIX)
-	if err != nil {
-		return err
-	}
-	response, err := o.client.Transact(context.TODO(), clearOps...)
-	if opErr, err := ovsdb.CheckOperationResults(response, clearOps); err != nil {
-		o.log.Warnf("%s: %+v", err.Error(), opErr)
-	}
-	if err != nil {
-		return err
-	}
+	o.clearIpfixBridge(bridge.Name)
 
 	// Create new configuration
 	named := "id"
@@ -181,7 +167,7 @@ func (o *OVSClient) SetIPFIX(bridgeName, target string, sampling, cacheMax, cach
 		return err
 	}
 	ops := append(insertOps, updateOps...)
-	response, err = o.client.Transact(context.TODO(), ops...)
+	response, err := o.client.Transact(context.TODO(), ops...)
 	logFields := logrus.Fields{
 		"operation": ops,
 		"response":  response,
@@ -198,25 +184,18 @@ func (o *OVSClient) SetIPFIX(bridgeName, target string, sampling, cacheMax, cach
 	return nil
 }
 
-func NewOVSClient(connStr string, statsBackend stats.StatsBackend, log *logrus.Logger) (*OVSClient, error) {
-	dbmodel, err := model.NewDBModel("Open_vSwitch", map[string]model.Model{
-		"Bridge":       &Bridge{},
-		"IPFIX":        &IPFIX{},
-		"Open_vSwitch": &OpenvSwitch{},
-	})
-	if err != nil {
-		return nil, err
+func (o *OVSClient) ClearIPFIX() error {
+	bridges := []Bridge{}
+	if !o.client.Connected() {
+		return nil
 	}
-	logr := logrusr.New(log)
-	cli, err := client.NewOVSDBClient(dbmodel, client.WithEndpoint(connStr), client.WithLogger(&logr))
-	if err != nil {
-		return nil, err
+	if err := o.client.List(&bridges); err != nil {
+		return err
 	}
-	return &OVSClient{
-		client: cli,
-		stats:  statsBackend,
-		log:    log,
-	}, nil
+	for _, bridge := range bridges {
+		o.clearIpfixBridge(bridge.Name)
+	}
+	return nil
 }
 
 func (o *OVSClient) Start() error {
@@ -366,4 +345,23 @@ func (o *OVSClient) updateProcessStatistics(old_statistics, statistics map[strin
 	o.stats.UpdateStat(statNames["ovs-virt"], fmt.Sprintf("%.2f", float64(virt)/1024))
 	o.stats.UpdateStat(statNames["ovs-rss"], fmt.Sprintf("%.2f", float64(rss)/1024))
 	o.stats.UpdateStat(statNames["ovs-cpu"], fmt.Sprintf("%.2f", cpu_percent))
+}
+
+func (o *OVSClient) clearIpfixBridge(bridgeName string) {
+	bridge := &Bridge{
+		Name:  bridgeName,
+		IPFIX: nil,
+	}
+	clearOps, err := o.client.Where(bridge).Update(bridge, &bridge.IPFIX)
+	if err != nil {
+		o.log.Error(err)
+	} else {
+		response, err := o.client.Transact(context.TODO(), clearOps...)
+		if err != nil {
+			o.log.Error(err)
+		}
+		if opErr, err := ovsdb.CheckOperationResults(response, clearOps); err != nil {
+			o.log.Errorf("%s: %+v", err.Error(), opErr)
+		}
+	}
 }
