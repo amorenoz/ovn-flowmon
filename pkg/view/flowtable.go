@@ -10,6 +10,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 	flowmessage "github.com/netsampler/goflow2/pb"
 	"github.com/rivo/tview"
+	"github.com/sirupsen/logrus"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -21,6 +22,22 @@ const ModeColsKeys SelectMode = 2 // Only Flow Key columns are selectable
 
 const ProcessedMessagesStat string = "Processed Messages"
 
+// FlowConsumer implementes the netflow.Consumer interface and adds the flowmessages
+// to a FlowTable
+type FlowConsumer struct {
+	FlowTable *FlowTable
+	App       *tview.Application
+}
+
+// Consume adds the flowmessage to the FlowTable
+func (fc *FlowConsumer) Consume(msg *flowmessage.FlowMessage, _ map[string]interface{}, log *logrus.Logger) {
+	fc.FlowTable.ProcessMessage(msg)
+	fc.App.QueueUpdateDraw(func() {
+		fc.FlowTable.Draw()
+	})
+}
+
+// FlowTable is in charge of managing a table of flows with aggregates.
 type FlowTable struct {
 	View  *tview.Table
 	stats stats.StatsBackend

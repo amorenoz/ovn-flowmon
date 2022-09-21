@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -20,7 +19,6 @@ import (
 	"github.com/rivo/tview"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"google.golang.org/protobuf/proto"
 )
 
 var (
@@ -60,33 +58,6 @@ The target must be specified in "Connection Methods" (man(7) ovsdb). Default is:
 		Args: cobra.MaximumNArgs(1),
 	}
 )
-
-// Implements goflow2.transport.TransportDriver
-type Dispatcher struct {
-	flowTable *view.FlowTable
-}
-
-func (d *Dispatcher) Prepare() error {
-	return nil
-}
-func (d *Dispatcher) Init(context.Context) error {
-	return nil
-}
-func (d *Dispatcher) Close(context.Context) error {
-	return nil
-}
-func (d *Dispatcher) Send(key, data []byte) error {
-	var msg flowmessage.FlowMessage
-	if err := proto.Unmarshal(data, &msg); err != nil {
-		log.Errorf("Wrong Flow Message (%s) : %s", err.Error(), string(data))
-		return err
-	}
-	d.flowTable.ProcessMessage(&msg)
-	app.QueueUpdateDraw(func() {
-		d.flowTable.Draw()
-	})
-	return nil
-}
 
 type Listener interface {
 	OnNewFlow(flow *flowmessage.FlowMessage)
@@ -372,7 +343,11 @@ func run_ovs(cmd *cobra.Command, args []string) {
 
 	app.SetRoot(pages, true).SetFocus(pages)
 
-	nf, err := netflow.NewNFReader(&Dispatcher{flowTable: flowTable}, 1, "netflow://"+ipAddr+":2055", log)
+	nf, err := netflow.NewNFReader(1,
+		"netflow://"+ipAddr+":2055",
+		&view.FlowConsumer{FlowTable: flowTable, App: app},
+		[]netflow.Enricher{},
+		log)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -413,7 +388,12 @@ decode the IPFIX Flow Records. It is possible that re-starting the exporter help
 }
 
 func do_listen(address string) {
-	nf, err := netflow.NewNFReader(&Dispatcher{flowTable: flowTable}, 1, "netflow://"+address, log)
+	nf, err := netflow.NewNFReader(1,
+		"netflow://"+address,
+		&view.FlowConsumer{FlowTable: flowTable, App: app},
+		[]netflow.Enricher{},
+		log)
+
 	if err != nil {
 		log.Fatal(err)
 	}

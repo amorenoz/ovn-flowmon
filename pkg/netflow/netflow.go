@@ -6,19 +6,61 @@ import (
 	"strconv"
 
 	"github.com/netsampler/goflow2/format"
-	"github.com/netsampler/goflow2/transport"
+	flowmessage "github.com/netsampler/goflow2/pb"
 	"github.com/netsampler/goflow2/utils"
 	"github.com/sirupsen/logrus"
+	"google.golang.org/protobuf/proto"
 )
 
 type NFReader struct {
-	transport transport.TransportDriver
-	workers   int
-	url       *url.URL
+	dispatcher Dispatcher
+	workers    int
+	url        *url.URL
+	log        *logrus.Logger
+}
+
+// Consumer is the interface that must be implemented to consume the NetFlow data.
+type Consumer interface {
+	Consume(msg *flowmessage.FlowMessage, extra map[string]interface{}, log *logrus.Logger)
+}
+
+// Enricher is the interface that must be implemented to enrich the NetFlow data.
+type Enricher interface {
+	Enrich(msg *flowmessage.FlowMessage, extra map[string]interface{}, log *logrus.Logger) map[string]interface{}
+}
+
+// Implements goflow2.transport.TransportDriver
+type Dispatcher struct {
+	consumer  Consumer
+	enrichers []Enricher
 	log       *logrus.Logger
 }
 
-func NewNFReader(transport transport.TransportDriver, workers int, address string, log *logrus.Logger) (*NFReader, error) {
+func (d *Dispatcher) Prepare() error {
+	return nil
+}
+func (d *Dispatcher) Init(context.Context) error {
+	return nil
+}
+func (d *Dispatcher) Close(context.Context) error {
+	return nil
+}
+func (d *Dispatcher) Send(key, data []byte) error {
+	var msg flowmessage.FlowMessage
+	if err := proto.Unmarshal(data, &msg); err != nil {
+		d.log.Errorf("Wrong Flow Message (%s) : %s", err.Error(), string(data))
+		return err
+	}
+
+	var extra map[string]interface{}
+	for _, enricher := range d.enrichers {
+		extra = enricher.Enrich(&msg, extra, d.log)
+	}
+	d.consumer.Consume(&msg, extra, d.log)
+	return nil
+}
+
+func NewNFReader(workers int, address string, consumer Consumer, enrichers []Enricher, log *logrus.Logger) (*NFReader, error) {
 	url, err := url.Parse(address)
 	if err != nil {
 		return nil, err
@@ -28,10 +70,14 @@ func NewNFReader(transport transport.TransportDriver, workers int, address strin
 	}
 
 	return &NFReader{
-		transport: transport,
-		workers:   workers,
-		url:       url,
-		log:       log,
+		dispatcher: Dispatcher{
+			consumer:  consumer,
+			enrichers: enrichers,
+			log:       log,
+		},
+		workers: workers,
+		url:     url,
+		log:     log,
 	}, nil
 
 }
@@ -55,7 +101,7 @@ func (r *NFReader) Listen() {
 	formatter, err := format.FindFormat(context.Background(), "pb")
 	sNF := &utils.StateNetFlow{
 		Format:    formatter,
-		Transport: r.transport,
+		Transport: &r.dispatcher,
 		Logger:    r.log,
 	}
 	err = sNF.FlowRoutine(r.workers, hostname, int(port), false)
