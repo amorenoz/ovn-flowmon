@@ -22,6 +22,20 @@ const ModeColsKeys SelectMode = 2 // Only Flow Key columns are selectable
 
 const ProcessedMessagesStat string = "Processed Messages"
 
+var fieldList []string = []string{
+	"InIf",
+	"OutIf",
+	"SrcMac",
+	"DstMac",
+	"VlanID",
+	"Etype",
+	"SrcAddr",
+	"DstAddr",
+	"Proto",
+	"SrcPort",
+	"DstPort",
+	"FlowDirection"}
+
 // FlowConsumer implementes the netflow.Consumer interface and adds the flowmessages
 // to a FlowTable
 type FlowConsumer struct {
@@ -60,12 +74,12 @@ type FlowTable struct {
 	nMessages int
 }
 
-func NewFlowTable(fields []string, aggregates map[string]bool, statsBackend stats.StatsBackend) *FlowTable {
+func NewFlowTable(statsBackend stats.StatsBackend) *FlowTable {
 	aggregateKeyList := []string{}
-	for _, field := range fields {
-		if aggregates[field] {
-			aggregateKeyList = append(aggregateKeyList, field)
-		}
+	aggregates := map[string]bool{}
+	for _, field := range fieldList {
+		aggregateKeyList = append(aggregateKeyList, field)
+		aggregates[field] = true
 	}
 	tableView := tview.NewTable().
 		SetSelectable(true, false). // Allow flows to be selected
@@ -84,7 +98,7 @@ func NewFlowTable(fields []string, aggregates map[string]bool, statsBackend stat
 		aggregates:       make([]*flowmon.FlowAggregate, 0),
 		aggregateKeyList: aggregateKeyList,
 		aggregateKeyMap:  aggregates,
-		keys:             fields,
+		keys:             fieldList,
 		lessFunc: func(one, other *flowmon.FlowAggregate) bool {
 			return one.LastTimeReceived < other.LastTimeReceived
 		},

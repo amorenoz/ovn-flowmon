@@ -30,8 +30,6 @@ var (
 	logLevel    string
 	ovsdb       string
 
-	fieldList []string = []string{"InIf", "OutIf", "SrcMac", "DstMac", "VlanID", "Etype", "SrcAddr", "DstAddr", "Proto", "SrcPort", "DstPort", "FlowDirection"}
-
 	rootCmd = &cobra.Command{
 		Use:   "ovs-flowmon",
 		Short: "ovs-flowmon is an interactive IPFIX flow visualizer specially supporting OVS/OVN",
@@ -98,12 +96,8 @@ Welcome to OvS Flow Monitor!
 }
 
 func mainPage(pages *tview.Pages) {
-	aggregates := make(map[string]bool, 0)
-	for _, key := range fieldList {
-		aggregates[key] = true
-	}
 	statsViewer = stats.NewStatsView(app)
-	flowTable = view.NewFlowTable(fieldList, aggregates, statsViewer)
+	flowTable = view.NewFlowTable(statsViewer)
 	status := tview.NewTextView().SetText("Stopped. Press Start to start capturing\n")
 	log.SetOutput(status)
 
