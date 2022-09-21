@@ -119,6 +119,7 @@ type FlowKey struct {
 	// Transport Header
 	SrcPort  DecUint32
 	DstPort  DecUint32
+	SvcPort  DecUint32
 	TCPFlags HexUint32
 	ICMPType HexUint32
 	ICMPCode HexUint32
@@ -204,6 +205,7 @@ func NewFlowInfo(msg *flowmessage.FlowMessage) *FlowInfo {
 			Proto:         Proto(msg.Proto),
 			SrcPort:       DecUint32(msg.SrcPort),
 			DstPort:       DecUint32(msg.DstPort),
+			SvcPort:       servicePort(msg),
 			TCPFlags:      HexUint32(msg.TCPFlags),
 			ICMPType:      HexUint32(msg.IcmpType),
 			ICMPCode:      HexUint32(msg.IcmpCode),
@@ -214,5 +216,17 @@ func NewFlowInfo(msg *flowmessage.FlowMessage) *FlowInfo {
 		Bytes:            DecUint64(msg.Bytes),
 		Packets:          DecUint64(msg.Packets),
 		ForwardingStatus: msg.ForwardingStatus,
+	}
+}
+
+// The servicePort is the non-ephemeral port.
+// The default for most Linux machines is 32768-60999
+func servicePort(msg *flowmessage.FlowMessage) DecUint32 {
+	if msg.SrcPort < 32768 {
+		return DecUint32(msg.SrcPort)
+	} else if msg.DstPort < 32768 {
+		return DecUint32(msg.DstPort)
+	} else {
+		return DecUint32(0)
 	}
 }

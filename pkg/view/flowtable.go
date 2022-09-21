@@ -34,6 +34,7 @@ var fieldList []string = []string{
 	"Proto",
 	"SrcPort",
 	"DstPort",
+	"SvcPort",
 	"FlowDirection"}
 
 // FlowConsumer implementes the netflow.Consumer interface and adds the flowmessages
