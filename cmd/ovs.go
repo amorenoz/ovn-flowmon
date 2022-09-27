@@ -10,7 +10,6 @@ import (
 
 	"amorenoz/ovs-flowmon/pkg/netflow"
 	"amorenoz/ovs-flowmon/pkg/ovs"
-	"amorenoz/ovs-flowmon/pkg/stats"
 	"amorenoz/ovs-flowmon/pkg/view"
 
 	"github.com/rivo/tview"
@@ -26,6 +25,9 @@ The target must be specified in "Connection Methods" (man(7) ovsdb). Default is:
 	Run:  runOvs,
 	Args: cobra.MaximumNArgs(1),
 }
+
+// ConfigPage is the OVS configuration page.
+const ConfigPage view.PageName = "config"
 
 func ovsStart(bridge string, sampling, cacheMax, cacheTimeout int) {
 	if ovsdb == "" {
@@ -70,13 +72,13 @@ func ovsStop() {
 	}
 }
 
-func ovsConfigPage(pages *tview.Pages) {
+func ovsAddConfigPage(app *view.App) {
 	var err error
 	if ovsdb == "" {
 		return
 	}
 	// Initialize OVS Configuration client
-	ovsClient, err = ovs.NewOVSClient(ovsdb, statsViewer, log)
+	ovsClient, err = ovs.NewOVSClient(ovsdb, app.Stats(), log)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -98,10 +100,10 @@ func ovsConfigPage(pages *tview.Pages) {
 		}).
 		AddButton("Save", func() {
 			ovsStart(bridge, sampling, ovs.DefaultCacheMax, ovs.DefaultActiveTimeout)
-			pages.HidePage("config")
+			app.ShowPage(view.MainPage)
 		}).
 		AddButton("Cancel", func() {
-			pages.HidePage("config")
+			app.ShowPage(view.MainPage)
 		})
 	// TODO add cache size, etc
 	configMenu := tview.NewFlex()
@@ -115,7 +117,7 @@ Press <Cancel> to go back to the main menu
 
 `), 0, 1, false).
 		AddItem(form, 0, 2, true)
-	pages.AddPage("config", view.Center(configMenu, 60, 20), true, false)
+	app.AddPage(ConfigPage, view.Center(configMenu, 60, 20), true, false)
 }
 
 func runOvs(cmd *cobra.Command, args []string) {
@@ -128,37 +130,29 @@ func runOvs(cmd *cobra.Command, args []string) {
 	if err != nil {
 		log.Fatalf("Bad OvS target %s", err.Error())
 	}
-	app = tview.NewApplication()
-	pages := tview.NewPages()
-	statsViewer = stats.NewStatsView(app)
-	flowTable = view.NewFlowTable().SetStatsBackend(statsViewer)
-	menuConfig := view.MainPageConfig{
-		FlowTable: flowTable,
-		Stats:     statsViewer,
-		OnExit:    ovsStop,
-		ExtraMenu: func(menu *tview.List, log *logrus.Logger) error {
-			menu.AddItem("Start OvS IPFIX Exporter", "", 's', func() {
-				ovsStart("br-int", ovs.DefaultSampling, ovs.DefaultCacheMax, ovs.DefaultActiveTimeout)
-			})
-			menu.AddItem("(Re)Configure OvS IPFIX Exporter", "", 'c', func() {
-				pages.ShowPage("config")
-			})
-			menu.AddItem("Stop OvS IPFIX Exporter", "", 't', func() {
-				ovsStop()
-			})
-			return nil
-		},
-	}
 
-	view.MainPage(app, pages, menuConfig, log)
-	ovsConfigPage(pages)
-	view.WelcomePage(pages, `In "ovs" mode you'll be able to configure OvS IPFIX sampling as well as to visualize live OvS statistics`)
+	app := view.NewApp(log)
+	app.OnExit(ovsStop)
+	app.ExtraMenu(func(menu *tview.List, log *logrus.Logger) error {
+		menu.AddItem("Start OvS IPFIX Exporter", "", 's', func() {
+			ovsStart("br-int", ovs.DefaultSampling, ovs.DefaultCacheMax, ovs.DefaultActiveTimeout)
+		})
+		menu.AddItem("(Re)Configure OvS IPFIX Exporter", "", 'c', func() {
+			log.Info("callback")
+			app.ShowPage(ConfigPage)
+		})
+		menu.AddItem("Stop OvS IPFIX Exporter", "", 't', func() {
+			ovsStop()
+		})
+		return nil
+	})
 
-	app.SetRoot(pages, true).SetFocus(pages)
+	ovsAddConfigPage(app)
+	app.WelcomePage(`In "ovs" mode you'll be able to configure OvS IPFIX sampling as well as to visualize live OvS statistics`)
 
 	nf, err := netflow.NewNFReader(1,
 		"netflow://"+ipAddr+":2055",
-		&view.FlowConsumer{FlowTable: flowTable, App: app},
+		&view.FlowConsumer{FlowTable: app.FlowTable(), App: app.App()},
 		[]netflow.Enricher{},
 		log)
 	if err != nil {

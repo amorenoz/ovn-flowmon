@@ -2,23 +2,20 @@ package cmd
 
 import (
 	"amorenoz/ovs-flowmon/pkg/ovs"
-	"amorenoz/ovs-flowmon/pkg/stats"
-	"amorenoz/ovs-flowmon/pkg/view"
 
 	_ "github.com/netsampler/goflow2/format/protobuf"
-	"github.com/rivo/tview"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
 var (
-	app         *tview.Application
-	flowTable   *view.FlowTable
-	statsViewer *stats.StatsView
-	ovsClient   *ovs.OVSClient
-	log         = logrus.New()
-	logLevel    string
-	ovsdb       string
+	//app *tview.Application
+	//flowTable   *view.FlowTable
+	//statsViewer *stats.StatsView
+	ovsClient *ovs.OVSClient
+	log       = logrus.New()
+	logLevel  string
+	ovsdb     string
 
 	rootCmd = &cobra.Command{
 		Use:   "ovs-flowmon",

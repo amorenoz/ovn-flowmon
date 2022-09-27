@@ -4,10 +4,8 @@ import (
 	"amorenoz/ovs-flowmon/pkg/netflow"
 	"amorenoz/ovs-flowmon/pkg/ovn"
 	"amorenoz/ovs-flowmon/pkg/ovs"
-	"amorenoz/ovs-flowmon/pkg/stats"
 	"amorenoz/ovs-flowmon/pkg/view"
 
-	"github.com/rivo/tview"
 	"github.com/spf13/cobra"
 )
 
@@ -20,27 +18,10 @@ var ovnCmd = &cobra.Command{
 
 func runOvn(cmd *cobra.Command, args []string) {
 	var ovsClient *ovs.OVSClient = nil
-	app = tview.NewApplication()
-	pages := tview.NewPages()
 
-	statsViewer = stats.NewStatsView(app)
-	flowTable = view.NewFlowTable().SetStatsBackend(statsViewer).SetOVN(true)
-	menuConfig := view.MainPageConfig{
-		FlowTable: flowTable,
-		Stats:     statsViewer,
-	}
-
-	ovsdb, err := cmd.Flags().GetString("ovs")
-	if err != nil {
-		log.Fatal(err)
-	}
-	if ovsdb != "" {
-		log.Infof("Starting OVS client: %s", ovsdb)
-		ovsClient, err = ovs.NewOVSClient(ovsdb, statsViewer, log)
-	}
-
-	view.MainPage(app, pages, menuConfig, log)
-	view.WelcomePage(pages, `OVN mode. Drop sampling has been enabled in the remote OVN cluster.
+	app := view.NewApp(log)
+	app.FlowTable().SetOVN(true)
+	app.WelcomePage(`OVN mode. Drop sampling has been enabled in the remote OVN cluster.
 However, IPFIX configuration needs to be added to each chassis that you want to sample. To do that, run the following command on them:
 
 ovs-vsctl --id=@br get Bridge br-int --
@@ -48,7 +29,14 @@ ovs-vsctl --id=@br get Bridge br-int --
 	  --  create Flow_Sample_Collector_Set bridge=@br id=1 ipfix=@i
 `)
 
-	app.SetRoot(pages, true).SetFocus(pages)
+	ovsdb, err := cmd.Flags().GetString("ovs")
+	if err != nil {
+		log.Fatal(err)
+	}
+	if ovsdb != "" {
+		log.Infof("Starting OVS client: %s", ovsdb)
+		ovsClient, err = ovs.NewOVSClient(ovsdb, app.Stats(), log)
+	}
 
 	nb, err := cmd.Flags().GetString("nbdb")
 	if err != nil {
@@ -76,7 +64,7 @@ ovs-vsctl --id=@br get Bridge br-int --
 	ipAddr := ""
 	nf, err := netflow.NewNFReader(1,
 		"netflow://"+ipAddr+":2055",
-		&view.FlowConsumer{FlowTable: flowTable, App: app},
+		&view.FlowConsumer{FlowTable: app.FlowTable(), App: app.App()},
 		[]netflow.Enricher{ovnClient},
 		log)
 	if err != nil {
