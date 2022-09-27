@@ -23,11 +23,11 @@ var ovsCmd = &cobra.Command{
 	Short: "Configure a local or remote ovs-vswitchd",
 	Long: `Configure per-bridge IPFIX sampling on a local or remote ovs-vswitchd daemon. This mode allows you to also visualize life OvS statistics.
 The target must be specified in "Connection Methods" (man(7) ovsdb). Default is: unix:/var/run/openvswitch/db.sock`,
-	Run:  run_ovs,
+	Run:  runOvs,
 	Args: cobra.MaximumNArgs(1),
 }
 
-func ovs_start(bridge string, sampling, cacheMax, cacheTimeout int) {
+func ovsStart(bridge string, sampling, cacheMax, cacheTimeout int) {
 	if ovsdb == "" {
 		log.Error("OVSDB not configured")
 		return
@@ -56,7 +56,7 @@ func ovs_start(bridge string, sampling, cacheMax, cacheTimeout int) {
 	}
 }
 
-func ovs_stop() {
+func ovsStop() {
 	if ovsClient != nil {
 		log.Info("Stopping IPFIX exporter")
 		err := ovsClient.ClearIPFIX()
@@ -97,7 +97,7 @@ func ovsConfigPage(pages *tview.Pages) {
 			}
 		}).
 		AddButton("Save", func() {
-			ovs_start(bridge, sampling, ovs.DefaultCacheMax, ovs.DefaultActiveTimeout)
+			ovsStart(bridge, sampling, ovs.DefaultCacheMax, ovs.DefaultActiveTimeout)
 			pages.HidePage("config")
 		}).
 		AddButton("Cancel", func() {
@@ -118,7 +118,7 @@ Press <Cancel> to go back to the main menu
 	pages.AddPage("config", view.Center(configMenu, 60, 20), true, false)
 }
 
-func run_ovs(cmd *cobra.Command, args []string) {
+func runOvs(cmd *cobra.Command, args []string) {
 	if len(args) == 1 {
 		ovsdb = args[0]
 	} else {
@@ -135,16 +135,16 @@ func run_ovs(cmd *cobra.Command, args []string) {
 	menuConfig := view.MainPageConfig{
 		FlowTable: flowTable,
 		Stats:     statsViewer,
-		OnExit:    ovs_stop,
+		OnExit:    ovsStop,
 		ExtraMenu: func(menu *tview.List, log *logrus.Logger) error {
 			menu.AddItem("Start OvS IPFIX Exporter", "", 's', func() {
-				ovs_start("br-int", ovs.DefaultSampling, ovs.DefaultCacheMax, ovs.DefaultActiveTimeout)
+				ovsStart("br-int", ovs.DefaultSampling, ovs.DefaultCacheMax, ovs.DefaultActiveTimeout)
 			})
 			menu.AddItem("(Re)Configure OvS IPFIX Exporter", "", 'c', func() {
 				pages.ShowPage("config")
 			})
 			menu.AddItem("Stop OvS IPFIX Exporter", "", 't', func() {
-				ovs_stop()
+				ovsStop()
 			})
 			return nil
 		},

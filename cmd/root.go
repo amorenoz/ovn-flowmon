@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"amorenoz/ovs-flowmon/pkg/netflow"
 	"amorenoz/ovs-flowmon/pkg/ovs"
 	"amorenoz/ovs-flowmon/pkg/stats"
 	"amorenoz/ovs-flowmon/pkg/view"
@@ -57,21 +56,4 @@ func init() {
 func initConfig() {
 	lvl, _ := logrus.ParseLevel(logLevel)
 	log.SetLevel(lvl)
-}
-
-func do_listen(address string) {
-	nf, err := netflow.NewNFReader(1,
-		"netflow://"+address,
-		&view.FlowConsumer{FlowTable: flowTable, App: app},
-		[]netflow.Enricher{},
-		log)
-
-	if err != nil {
-		log.Fatal(err)
-	}
-	go nf.Listen()
-
-	if err := app.Run(); err != nil {
-		panic(err)
-	}
 }

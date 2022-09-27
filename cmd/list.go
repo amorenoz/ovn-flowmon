@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"amorenoz/ovs-flowmon/pkg/netflow"
 	"amorenoz/ovs-flowmon/pkg/stats"
 	"amorenoz/ovs-flowmon/pkg/view"
 
@@ -12,11 +13,11 @@ var listenCmd = &cobra.Command{
 	Use:   "listen [host:port]",
 	Short: "Listen to exisiting IPFIX traffic",
 	Long:  "An IPFIX exporter muxt be configured manually. Default listen address is: *:2055.",
-	Run:   run_listen,
+	Run:   runListen,
 	Args:  cobra.MaximumNArgs(1),
 }
 
-func run_listen(cmd *cobra.Command, args []string) {
+func runListen(cmd *cobra.Command, args []string) {
 	ipPort := ":2055"
 	if len(args) == 1 {
 		ipPort = args[0]
@@ -41,5 +42,18 @@ decode the IPFIX Flow Records. It is possible that re-starting the exporter help
 
 	app.SetRoot(pages, true).SetFocus(pages)
 
-	do_listen(ipPort)
+	nf, err := netflow.NewNFReader(1,
+		"netflow://"+ipPort,
+		&view.FlowConsumer{FlowTable: flowTable, App: app},
+		[]netflow.Enricher{},
+		log)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+	go nf.Listen()
+
+	if err := app.Run(); err != nil {
+		panic(err)
+	}
 }

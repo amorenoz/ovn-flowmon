@@ -15,10 +15,10 @@ var ovnCmd = &cobra.Command{
 	Use:   "ovn",
 	Short: "Configure and visualize OVN debug-mode (experimental)",
 	Long:  `In this mode ovs-flowmon connects to a OVN control plane. It configures OVN's debug-mode and drop sampling. Then it enriches each flow with OVN data extracted from the IPFIX sample`,
-	Run:   run_ovn,
+	Run:   runOvn,
 }
 
-func run_ovn(cmd *cobra.Command, args []string) {
+func runOvn(cmd *cobra.Command, args []string) {
 	var ovsClient *ovs.OVSClient = nil
 	app = tview.NewApplication()
 	pages := tview.NewPages()
