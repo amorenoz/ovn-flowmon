@@ -46,6 +46,15 @@ The collector will listen on ::2055. Now you can configure your exporter to expo
 Where OVS_FLOWMON_IP is the IP Address where ovs-flowmon can be reached.
 
 
+### OVN mode (Experimental): Sample OVN drops
+OVN mode interacts with a running OVN cluster and configures drop-sampling mode. Also, it can add the correspondent per-flow IPFIX sampling configuration a running OvS.
+
+The result is the ability to visualize the packets that are dropped by OVN as well as the LogicalFlows, stages, etc that caused the drop.
+Example:
+
+     ./build/ovs-flowmon ovn --nbdb tcp:172.18.0.4:6641 --sbdb  tcp:172.18.0.4:6642 --ovs unix:/var/run/openvswitch/db.sock
+
+
 ## Aggregates
 The flow table supports aggregation. Aggregation is a useful tool to visualize exactly the flows you're looking for.
 
@@ -87,7 +96,13 @@ If you just want to see how much traffic is hitting IP_B you can add SrcAddr to 
 
 Use the deploy script to deploy the monitor in the node you want to monitor:
 
-    ./deploy.sh [ -i NON_DEFAULT_IMAGE ] NODE_NAME
+    ./deploy.sh [ -i NON_DEFAULT_IMAGE ] [-o] NODE_NAME
+
+#### OVN mode
+
+To deploy the flow monitor in OVN drop-sampling mode, run
+
+    ./deploy.sh -o NODE_NAME
 
 
 To clean the deployment simply delete the ovs-flowmon pod:

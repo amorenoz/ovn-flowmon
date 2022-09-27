@@ -9,6 +9,13 @@ spec:
   containers:
   - name: ovs-flowmon
     image: {{ image }}
+    #imagePullPolicy: Always
+    env:
+    - name: OVS_FLOWMON_MODE
+      value: "{{ mode }}"
+    - name: OVN_CENTRAL
+      value: "{{ ovn_central }}"
+
     volumeMounts:
     - mountPath: /var/run/openvswitch
       name: host-var-run-ovs
@@ -18,4 +25,4 @@ spec:
       hostPath:
         path: /var/run/openvswitch
   nodeSelector:
-    flowmon: "true"
+    flowmon: "{{ deployment }}"

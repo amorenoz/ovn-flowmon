@@ -7,7 +7,8 @@ RUN dnf install -y centos-release-nfv-openvswitch
 RUN dnf install --best --refresh -y \
         golang \
         openvswitch2.15 \
-        make
+        make \
+        util-linux
 RUN dnf clean all && rm -rf /var/cache/dnf/*
 
 COPY . /src
