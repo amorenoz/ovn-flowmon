@@ -78,7 +78,6 @@ func ovsConfigPage(pages *tview.Pages) {
 	// Initialize OVS Configuration client
 	ovsClient, err = ovs.NewOVSClient(ovsdb, statsViewer, log)
 	if err != nil {
-		fmt.Print(err)
 		log.Fatal(err)
 	}
 
@@ -190,6 +189,6 @@ func ipAddressFromOvsdb(ovsdb string) (string, error) {
 		}
 		return "127.0.0.1", nil
 	default:
-		return "", fmt.Errorf("Unsupported OvS target. Only unix and tcp are supported")
+		return "", fmt.Errorf("Unsupported OvS target. Only unix and tcp are supported %s", ovsdb)
 	}
 }

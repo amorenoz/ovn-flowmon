@@ -46,6 +46,15 @@ type IPFIX struct {
 	Targets            []string          `ovsdb:"targets"`
 }
 
+// FlowSampleCollectorSet defines an object in Flow_Sample_Collector_Set table
+type FlowSampleCollectorSet struct {
+	UUID        string            `ovsdb:"_uuid"`
+	Bridge      string            `ovsdb:"bridge"`
+	ExternalIDs map[string]string `ovsdb:"external_ids"`
+	ID          int               `ovsdb:"id"`
+	IPFIX       *string           `ovsdb:"ipfix"`
+}
+
 // OpenvSwitch defines an object in Open_vSwitch table
 type OpenvSwitch struct {
 	UUID    string   `ovsdb:"_uuid"`
@@ -103,9 +112,10 @@ type OVSClient struct {
 
 func NewOVSClient(connStr string, statsBackend stats.StatsBackend, log *logrus.Logger) (*OVSClient, error) {
 	dbmodel, err := model.NewDBModel("Open_vSwitch", map[string]model.Model{
-		"Bridge":       &Bridge{},
-		"IPFIX":        &IPFIX{},
-		"Open_vSwitch": &OpenvSwitch{},
+		"Bridge":                    &Bridge{},
+		"IPFIX":                     &IPFIX{},
+		"Open_vSwitch":              &OpenvSwitch{},
+		"Flow_Sample_Collector_Set": &FlowSampleCollectorSet{},
 	})
 	if err != nil {
 		return nil, err
@@ -137,6 +147,61 @@ func (o *OVSClient) Started() bool {
 	return o.client.Connected()
 }
 
+// SetFlowSampling on br-int
+func (o *OVSClient) SetFlowSampling(target string) error {
+	if !o.client.Connected() {
+		return fmt.Errorf("Client not connected")
+	}
+	bridge := &Bridge{
+		Name: "br-int",
+	}
+	err := o.client.Get(bridge)
+	if err != nil {
+		return err
+	}
+	o.clearFlowBridge(bridge)
+
+	namedIPFIX := "namedIPFIX"
+
+	bridge.IPFIX = &namedIPFIX
+	ipfix := &IPFIX{
+		UUID:    namedIPFIX,
+		Targets: []string{target},
+	}
+
+	collector := &FlowSampleCollectorSet{
+		ID:     1,
+		IPFIX:  &namedIPFIX,
+		Bridge: bridge.UUID,
+	}
+
+	insertOps, err := o.client.Create(ipfix, collector)
+	if err != nil {
+		return err
+	}
+
+	updateOps, err := o.client.Where(bridge).Update(bridge, &bridge.IPFIX)
+	if err != nil {
+		return err
+	}
+	ops := append(insertOps, updateOps...)
+	response, err := o.client.Transact(context.TODO(), ops...)
+	logFields := logrus.Fields{
+		"operation": ops,
+		"response":  response,
+		"err":       err,
+	}
+	o.log.WithFields(logFields).Debug("OVS IPFIX Configuration")
+
+	if err != nil {
+		return err
+	}
+	if opErr, err := ovsdb.CheckOperationResults(response, ops); err != nil {
+		return fmt.Errorf("%s: %+v", err.Error(), opErr)
+	}
+	return nil
+
+}
 func (o *OVSClient) SetIPFIX(bridgeName, target string, sampling, cacheMax, cacheTimeout int) error {
 	if !o.client.Connected() {
 		return fmt.Errorf("Client not connected")
@@ -361,6 +426,32 @@ func (o *OVSClient) clearIpfixBridge(bridgeName string) {
 			o.log.Error(err)
 		}
 		if opErr, err := ovsdb.CheckOperationResults(response, clearOps); err != nil {
+			o.log.Errorf("%s: %+v", err.Error(), opErr)
+		}
+	}
+}
+
+func (o *OVSClient) clearFlowBridge(bridge *Bridge) {
+	collector := &FlowSampleCollectorSet{}
+
+	delOps, err := o.client.Where(collector, model.Condition{
+		Field:    &collector.Bridge,
+		Function: ovsdb.ConditionEqual,
+		Value:    bridge.UUID,
+	}).Delete()
+
+	bridge.IPFIX = nil
+	clearOps, err := o.client.Where(bridge).Update(bridge, &bridge.IPFIX)
+	ops := append(delOps, clearOps...)
+
+	if err != nil {
+		o.log.Error(err)
+	} else {
+		response, err := o.client.Transact(context.TODO(), ops...)
+		if err != nil {
+			o.log.Error(err)
+		}
+		if opErr, err := ovsdb.CheckOperationResults(response, ops); err != nil {
 			o.log.Errorf("%s: %+v", err.Error(), opErr)
 		}
 	}

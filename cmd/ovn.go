@@ -3,6 +3,7 @@ package cmd
 import (
 	"amorenoz/ovs-flowmon/pkg/netflow"
 	"amorenoz/ovs-flowmon/pkg/ovn"
+	"amorenoz/ovs-flowmon/pkg/ovs"
 	"amorenoz/ovs-flowmon/pkg/stats"
 	"amorenoz/ovs-flowmon/pkg/view"
 
@@ -18,6 +19,7 @@ var ovnCmd = &cobra.Command{
 }
 
 func run_ovn(cmd *cobra.Command, args []string) {
+	var ovsClient *ovs.OVSClient = nil
 	app = tview.NewApplication()
 	pages := tview.NewPages()
 
@@ -27,6 +29,16 @@ func run_ovn(cmd *cobra.Command, args []string) {
 		FlowTable: flowTable,
 		Stats:     statsViewer,
 	}
+
+	ovsdb, err := cmd.Flags().GetString("ovs")
+	if err != nil {
+		log.Fatal(err)
+	}
+	if ovsdb != "" {
+		log.Infof("Starting OVS client: %s", ovsdb)
+		ovsClient, err = ovs.NewOVSClient(ovsdb, statsViewer, log)
+	}
+
 	view.MainPage(app, pages, menuConfig, log)
 	view.WelcomePage(pages, `OVN mode. Drop sampling has been enabled in the remote OVN cluster.
 However, IPFIX configuration needs to be added to each chassis that you want to sample. To do that, run the following command on them:
@@ -72,7 +84,37 @@ ovs-vsctl --id=@br get Bridge br-int --
 	}
 	go nf.Listen()
 
+	if ovsClient != nil {
+		ovnOvsStartAndConfig(ovsClient, ovsdb)
+	}
+
 	if err := app.Run(); err != nil {
 		panic(err)
+	}
+}
+
+func ovnOvsStart(ovs *ovs.OVSClient) {
+	err := ovs.Start()
+	if err != nil {
+		log.Error("Failed to start Ovs Client")
+		return
+	}
+	err = ovs.EnableStatistics()
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func ovnOvsStartAndConfig(ovs *ovs.OVSClient, ovsdb string) {
+	if !ovs.Started() {
+		ovnOvsStart(ovs)
+	}
+	ipAddr, err := ipAddressFromOvsdb(ovsdb)
+	if err != nil {
+		log.Fatalf("Bad OvS target %s", err.Error())
+	}
+	err = ovs.SetFlowSampling(ipAddr + ":2055")
+	if err != nil {
+		log.Fatalf("Failed to configure OVS Flow sampling: %s", err.Error())
 	}
 }
