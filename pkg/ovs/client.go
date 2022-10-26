@@ -175,16 +175,11 @@ func (o *OVSClient) SetFlowSampling(target string) error {
 		Bridge: bridge.UUID,
 	}
 
-	insertOps, err := o.client.Create(ipfix, collector)
+	ops, err := o.client.Create(ipfix, collector)
 	if err != nil {
 		return err
 	}
 
-	updateOps, err := o.client.Where(bridge).Update(bridge, &bridge.IPFIX)
-	if err != nil {
-		return err
-	}
-	ops := append(insertOps, updateOps...)
 	response, err := o.client.Transact(context.TODO(), ops...)
 	logFields := logrus.Fields{
 		"operation": ops,

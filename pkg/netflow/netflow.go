@@ -51,6 +51,7 @@ func (d *Dispatcher) Send(key, data []byte) error {
 		d.log.Errorf("Wrong Flow Message (%s) : %s", err.Error(), string(data))
 		return err
 	}
+	d.log.Debugf("New flow: %s", msg.String())
 
 	extra := make(map[string]interface{}, 0)
 	for _, enricher := range d.enrichers {

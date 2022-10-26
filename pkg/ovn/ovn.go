@@ -134,7 +134,6 @@ func (o *OVNClient) Close() error {
 		return err
 	}
 	nb := nbs[0]
-	delete(nb.Options, "debug_drop_mode")
 	delete(nb.Options, "debug_drop_collector_set")
 	delete(nb.Options, "debug_drop_domain_id")
 	clearOps, err := o.nb.Where(&nb).Update(&nb, &nb.Options)
@@ -196,14 +195,8 @@ func (o *OVNClient) SetDebugMode() error {
 		return err
 	}
 	nb := nbs[0]
-	nb.Options["debug_drop_mode"] = "true"
 
 	mutateOps, err := o.nb.Where(&nb).Mutate(&nb,
-		model.Mutation{
-			Field:   &nb.Options,
-			Mutator: ovsdb.MutateOperationInsert,
-			Value:   map[string]string{"debug_drop_mode": "true"},
-		},
 		model.Mutation{
 			Field:   &nb.Options,
 			Mutator: ovsdb.MutateOperationInsert,
@@ -223,13 +216,13 @@ func (o *OVNClient) SetDebugMode() error {
 		"response":  response,
 		"err":       err,
 	}
-	o.log.WithFields(logFields).Debug("OVN Debug mode: Enabling")
 	if err != nil {
 		o.log.WithFields(logFields).Error(err)
 	}
 	if opErr, err := ovsdb.CheckOperationResults(response, mutateOps); err != nil {
 		o.log.WithFields(logFields).Errorf("%s: %+v", err.Error(), opErr)
 	}
+	o.log.WithFields(logFields).Info("OVN Drop sampling: Enabled")
 	return nil
 }
 
@@ -248,7 +241,6 @@ to an existing datapath.
 
 func (o *OVNClient) getSampleInfo(sample *flowmessage.FlowMessage) (*SampleInfo, error) {
 	obsDomainID := sample.ObservationDomainID
-	o.log.Debug("Domain ID {}", obsDomainID)
 
 	domain := (obsDomainID & 0xFF000000) >> 24
 	tunnelKey := obsDomainID & 0x00FFFFFF
@@ -306,7 +298,7 @@ func (o *OVNClient) getOVNDebugSampleInfo(tunnelKey, obsPointID uint32) (*Sample
 representation of the ObservationPointID.*/
 func (o *OVNClient) getLFlow(observationPointID uint32) (*LogicalFlow, error) {
 	lf := []LogicalFlow{}
-	obsString := fmt.Sprintf("%x", int(observationPointID))
+	obsString := fmt.Sprintf("%08x", int(observationPointID))
 	err := o.sb.WhereCache(
 		func(ls *LogicalFlow) bool {
 			return strings.HasPrefix(ls.UUID, obsString)
@@ -315,10 +307,10 @@ func (o *OVNClient) getLFlow(observationPointID uint32) (*LogicalFlow, error) {
 		return nil, err
 	}
 	if len(lf) == 0 {
-		return nil, fmt.Errorf("No LogicalFlow found with observationPointID %x", obsString)
+		return nil, fmt.Errorf("No LogicalFlow found with observationPointID %s", obsString)
 	}
 	if len(lf) > 1 {
-		o.log.Warningf("Duplicated LogicalFlow found with observationPointID %x", obsString)
+		o.log.Warningf("Duplicated LogicalFlow found with observationPointID %s", obsString)
 	}
 	return &lf[0], nil
 }
