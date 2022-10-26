@@ -100,7 +100,8 @@ Welcome to OvS Flow Monitor!
 `).AddButtons([]string{"Start"}).SetDoneFunc(func(index int, label string) {
 		m.pages.HidePage(Welcome)
 		m.pages.ShowPage(MainPage)
-	})
+	}).
+		SetBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
 	m.pages.AddPage(Welcome, welcome, true, true)
 }
 
