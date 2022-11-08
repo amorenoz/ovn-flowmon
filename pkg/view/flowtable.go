@@ -20,6 +20,18 @@ const ModeRows SelectMode = 0     // Only Rows are selectable
 const ModeColsAll SelectMode = 1  // All Columns are selectable
 const ModeColsKeys SelectMode = 2 // Only Flow Key columns are selectable
 
+// TableMode defines different modes or layouts
+type TableMode int
+
+// Normal mode: Columns with basic traffic headers are shown.
+const Normal TableMode = 0
+
+// OVN Drop mode: Columns show Logical Flow and Datapath information.
+const OVN TableMode = 1
+
+// OVNAcl mode: Columns show ACL name, direction and veredict.
+const OVNAcl TableMode = 2
+
 const ProcessedMessagesStat string = "Processed Messages"
 
 var fieldList []string = []string{
@@ -46,6 +58,12 @@ var ovnFieldList []string = []string{
 	"DPType",
 	"DPName",
 	"OFTable",
+}
+
+var ovnAclFieldList []string = []string{
+	"ACLName",
+	"ACLDirection",
+	"ACLAction",
 }
 
 // FlowConsumer implementes the netflow.Consumer interface and adds the flowmessages
@@ -116,15 +134,27 @@ func (ft *FlowTable) SetStatsBackend(statsBackend stats.StatsBackend) *FlowTable
 	return ft
 }
 
-func (ft *FlowTable) SetOVN(ovn bool) *FlowTable {
-	if ovn {
+func (ft *FlowTable) SetMode(mode TableMode) *FlowTable {
+	needsUpdate := false
+	switch mode {
+	case Normal:
+		break
+	case OVN:
 		for _, field := range ovnFieldList {
 			ft.keys = append(ft.keys, field)
 		}
+		needsUpdate = true
+	case OVNAcl:
+		for _, field := range ovnAclFieldList {
+			ft.keys = append(ft.keys, field)
+		}
+		needsUpdate = true
 	}
-	ft.mutex.Lock()
-	defer ft.mutex.Unlock()
-	ft.updateFieldsLocked()
+	if needsUpdate {
+		ft.mutex.Lock()
+		defer ft.mutex.Unlock()
+		ft.updateFieldsLocked()
+	}
 	return ft
 }
 

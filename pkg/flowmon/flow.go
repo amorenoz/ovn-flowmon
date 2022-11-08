@@ -133,6 +133,11 @@ type FlowKey struct {
 	DPType     string
 	DPName     string
 	OFTable    DecUint32
+
+	// OVN ACL information
+	ACLName      string
+	ACLDirection string
+	ACLAction    string
 }
 
 // GetFieldString returns the string representation of the given fieldName
@@ -200,6 +205,15 @@ func (fk *FlowKey) fillExtra(extra map[string]interface{}) {
 	}
 	if data, ok := extra["OFTable"]; ok {
 		fk.OFTable = DecUint32(data.(int))
+	}
+	if data, ok := extra["ACLName"]; ok {
+		fk.ACLName = data.(string)
+	}
+	if data, ok := extra["ACLDirection"]; ok {
+		fk.ACLDirection = data.(string)
+	}
+	if data, ok := extra["ACLAction"]; ok {
+		fk.ACLAction = data.(string)
 	}
 }
 
