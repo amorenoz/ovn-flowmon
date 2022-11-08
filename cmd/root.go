@@ -48,6 +48,11 @@ func init() {
 	ovnCmd.Flags().StringP("nbdb", "n", "unix:/var/run/ovn/ovnnb_db.sock", "OVN NB database connection")
 	ovnCmd.Flags().StringP("sbdb", "s", "unix:/var/run/ovn/ovnsb_db.sock", "OVN SB database connection") // TODO Override with OVN_NB_DB and OVN_SB_DB and OVN_RUNDIR
 	ovnCmd.Flags().StringP("ovs", "o", "", "Optional OVS DB to configure")
+
+	// ACL
+	rootCmd.AddCommand(aclCmd)
+	aclCmd.Flags().StringP("nbdb", "n", "unix:/var/run/ovn/ovnnb_db.sock", "OVN NB database connection")
+	aclCmd.Flags().StringP("sbdb", "s", "unix:/var/run/ovn/ovnsb_db.sock", "OVN SB database connection") // TODO Override with OVN_NB_DB and OVN_SB_DB and OVN_RUNDIR
 }
 
 func initConfig() {
