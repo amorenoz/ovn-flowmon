@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"amorenoz/ovs-flowmon/pkg/netflow"
+
 	"github.com/bombsimon/logrusr/v2"
 	flowmessage "github.com/netsampler/goflow2/pb"
 	"github.com/ovn-org/libovsdb/client"
@@ -15,6 +17,7 @@ import (
 
 const (
 	OVNDebugDomain = 1
+	OVNACLDomain   = 2
 )
 
 // NBGlobal defines an object in NB_Global table
@@ -74,6 +77,43 @@ var (
 	DatapathTypePhysical DatapathType = "physical"
 )
 
+type (
+	ACLAction    = string
+	ACLDirection = string
+	ACLSeverity  = string
+)
+
+var (
+	ACLActionAllow          ACLAction    = "allow"
+	ACLActionAllowRelated   ACLAction    = "allow-related"
+	ACLActionAllowStateless ACLAction    = "allow-stateless"
+	ACLActionDrop           ACLAction    = "drop"
+	ACLActionReject         ACLAction    = "reject"
+	ACLDirectionFromLport   ACLDirection = "from-lport"
+	ACLDirectionToLport     ACLDirection = "to-lport"
+	//ACLSeverityAlert        ACLSeverity  = "alert"
+	//ACLSeverityWarning      ACLSeverity  = "warning"
+	//ACLSeverityNotice       ACLSeverity  = "notice"
+	//ACLSeverityInfo         ACLSeverity  = "info"
+	//ACLSeverityDebug        ACLSeverity  = "debug"
+)
+
+// ACL defines an object in ACL table
+type ACL struct {
+	UUID        string            `ovsdb:"_uuid"`
+	Action      ACLAction         `ovsdb:"action"`
+	Direction   ACLDirection      `ovsdb:"direction"`
+	ExternalIDs map[string]string `ovsdb:"external_ids"`
+	//Label       int               `ovsdb:"label"`
+	//Log         bool              `ovsdb:"log"`
+	//Match	      string		`ovsdb:"match"`
+	//Meter       *string           `ovsdb:"meter"`
+	Name    *string           `ovsdb:"name"`
+	Options map[string]string `ovsdb:"options"`
+	//Priority    int               `ovsdb:"priority"`
+	//Severity    *ACLSeverity      `ovsdb:"severity"`
+}
+
 // SampleInfo represents the OVN information associated with a sample.
 type SampleInfo struct {
 	// Flow information.
@@ -99,6 +139,7 @@ func NewOVNClient(nbStr string, sbStr string, log *logrus.Logger) (*OVNClient, e
 	dbmodel, err := model.NewDBModel("OVN_Northbound",
 		map[string]model.Model{
 			"NB_Global": &NBGlobal{},
+			"ACL":       &ACL{},
 		})
 	if err != nil {
 		return nil, err
@@ -239,20 +280,33 @@ to an existing datapath.
 - The table number if the Datapath Key is zero.
 */
 
-func (o *OVNClient) getSampleInfo(sample *flowmessage.FlowMessage) (*SampleInfo, error) {
+func (o *OVNClient) extractObservationIds(sample *flowmessage.FlowMessage) (uint32, uint32, uint32, error) {
 	obsDomainID := sample.ObservationDomainID
 
 	domain := (obsDomainID & 0xFF000000) >> 24
 	tunnelKey := obsDomainID & 0x00FFFFFF
 
-	if domain != OVNDebugDomain {
-		return nil, fmt.Errorf("DomainID %d not supported for OVN Data extraction", domain)
+	if domain != OVNDebugDomain && domain != OVNACLDomain {
+		return 0, 0, 0, fmt.Errorf("DomainID %d not supported for OVN Data extraction", domain)
 	}
-
 	obsPointID := sample.ObservationPointID
+	return domain, obsPointID, tunnelKey, nil
+}
 
-	return o.getOVNDebugSampleInfo(tunnelKey, obsPointID)
+func (o *OVNClient) getSampleOVNInfo(sample *flowmessage.FlowMessage) (*SampleInfo, error) {
+	_, point, tunnel, err := o.extractObservationIds(sample)
+	if err != nil {
+		return nil, err
+	}
+	return o.getOVNDebugSampleInfo(tunnel, point)
+}
 
+func (o *OVNClient) getSampleACLInfo(sample *flowmessage.FlowMessage) (*ACL, error) {
+	_, point, _, err := o.extractObservationIds(sample)
+	if err != nil {
+		return nil, err
+	}
+	return o.getACL(point)
 }
 
 func (o *OVNClient) getOVNDebugSampleInfo(tunnelKey, obsPointID uint32) (*SampleInfo, error) {
@@ -296,6 +350,27 @@ func (o *OVNClient) getOVNDebugSampleInfo(tunnelKey, obsPointID uint32) (*Sample
 
 /* Look if there is a Logical Flow whose UUID starts with the hexadecimal
 representation of the ObservationPointID.*/
+func (o *OVNClient) getACL(observationPointID uint32) (*ACL, error) {
+	acls := []ACL{}
+	obsString := fmt.Sprintf("%08x", int(observationPointID))
+	err := o.nb.WhereCache(
+		func(ls *ACL) bool {
+			return strings.HasPrefix(ls.UUID, obsString)
+		}).List(&acls)
+	if err != nil {
+		return nil, err
+	}
+	if len(acls) == 0 {
+		return nil, fmt.Errorf("No ACL found with observationPointID %s", obsString)
+	}
+	if len(acls) > 1 {
+		o.log.Warningf("Duplicated ACL found with observationPointID %s", obsString)
+	}
+	return &acls[0], nil
+}
+
+/* Look if there is a Logical Flow whose UUID starts with the hexadecimal
+representation of the ObservationPointID.*/
 func (o *OVNClient) getLFlow(observationPointID uint32) (*LogicalFlow, error) {
 	lf := []LogicalFlow{}
 	obsString := fmt.Sprintf("%08x", int(observationPointID))
@@ -335,8 +410,18 @@ func (o *OVNClient) getDatapath(tunnelKey uint32) (*DatapathBinding, error) {
 	return &dps[0], nil
 }
 
-func (o *OVNClient) Enrich(msg *flowmessage.FlowMessage, extra map[string]interface{}, log *logrus.Logger) map[string]interface{} {
-	sampleInfo, err := o.getSampleInfo(msg)
+// OVNEnricher returns an Enricher that augments the flow data with generic OVN information
+func (o *OVNClient) OVNEnricher() netflow.Enricher {
+	return &OVNEnricher{o}
+}
+
+// ACLEnricher returns an Enricher that augments the flow data with ACL information
+func (o *OVNClient) ACLEnricher() netflow.Enricher {
+	return &OVNACLEnricher{o}
+}
+
+func (o *OVNClient) EnrichOVN(msg *flowmessage.FlowMessage, extra map[string]interface{}, log *logrus.Logger) map[string]interface{} {
+	sampleInfo, err := o.getSampleOVNInfo(msg)
 	if err != nil {
 		log.Error(err)
 		return extra
@@ -352,4 +437,41 @@ func (o *OVNClient) Enrich(msg *flowmessage.FlowMessage, extra map[string]interf
 	extra["DPName"] = string(sampleInfo.DatapathName)
 	extra["OFTable"] = sampleInfo.OpenFlowTable
 	return extra
+}
+
+func (o *OVNClient) EnrichOVNACL(msg *flowmessage.FlowMessage, extra map[string]interface{}, log *logrus.Logger) map[string]interface{} {
+	acl, err := o.getSampleACLInfo(msg)
+	if err != nil {
+		log.Error(err)
+		return extra
+	}
+	if acl != nil {
+		if acl.Name != nil {
+			extra["ACLName"] = string(*acl.Name)
+		} else {
+			extra["ACLName"] = ""
+		}
+		//extra["ACLLabel"] = string(acl.Label)
+		extra["ACLDirection"] = string(acl.Direction)
+		extra["ACLAction"] = string(acl.Action)
+	}
+	return extra
+}
+
+// OVNEnricher implements the enricher interface for a OVNClient in OVN mode.
+type OVNEnricher struct {
+	client *OVNClient
+}
+
+func (o *OVNEnricher) Enrich(msg *flowmessage.FlowMessage, extra map[string]interface{}, log *logrus.Logger) map[string]interface{} {
+	return o.client.EnrichOVN(msg, extra, log)
+}
+
+// OVNACLEnricher implements the enricher interface for a OVNClient in ACL mode.
+type OVNACLEnricher struct {
+	client *OVNClient
+}
+
+func (o *OVNACLEnricher) Enrich(msg *flowmessage.FlowMessage, extra map[string]interface{}, log *logrus.Logger) map[string]interface{} {
+	return o.client.EnrichOVNACL(msg, extra, log)
 }

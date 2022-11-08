@@ -20,7 +20,7 @@ func runOvn(cmd *cobra.Command, args []string) {
 	var ovsClient *ovs.OVSClient = nil
 
 	app := view.NewApp(log)
-	app.FlowTable().SetOVN(true)
+	app.FlowTable().SetMode(view.OVN)
 	app.WelcomePage(`OVN mode. Drop sampling has been enabled in the remote OVN cluster.
 However, IPFIX configuration needs to be added to each chassis that you want to sample. To do that, run the following command on them:
 
@@ -65,7 +65,7 @@ ovs-vsctl --id=@br get Bridge br-int --
 	nf, err := netflow.NewNFReader(1,
 		"netflow://"+ipAddr+":2055",
 		&view.FlowConsumer{FlowTable: app.FlowTable(), App: app.App()},
-		[]netflow.Enricher{ovnClient},
+		[]netflow.Enricher{ovnClient.OVNEnricher()},
 		log)
 	if err != nil {
 		log.Fatal(err)
