@@ -11,6 +11,9 @@ case ${OVS_FLOWMON_MODE} in
     ovn)
         cmd="ovs-flowmon ovn --nbdb tcp:${OVN_CENTRAL}:6641 --sbdb tcp:${OVN_CENTRAL}:6642 --ovs ${OVS_TARGET}"
         ;;
+    acl)
+        cmd="ovs-flowmon acl --nbdb tcp:${OVN_CENTRAL}:6641 --sbdb tcp:${OVN_CENTRAL}:6642"
+        ;;
     *)
         echo "unkown mode"
         exit 1
