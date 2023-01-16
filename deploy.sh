@@ -7,17 +7,26 @@ SCRIPT_PATH=`dirname $SCRIPT`
 TEMPLATE=${SCRIPT_PATH}/dist/ovs-flowmon.yaml.j2
 POD_SPEC=${SCRIPT_PATH}/build/ovs-flowmon.yaml
 IMAGE=quay.io/amorenoz/ovs-flowmon
+OVN_K8S_NAMESPACE="ovn-kubernetes"
+OVN_CENTRAL="unknown"
+MODE="ovs"
+mkdir -p ${SCRIPT_PATH}/build
 
 usage() {
-    echo "$0 [OPTIONS] NODE_NAME "
+    echo "$0 [OPTIONS] NODE_NAME"
     echo ""
     echo "Deploy the ovs-flowmon to debug the OVS running on a k8s NODE"
     echo ""
     echo "Options"
     echo "  -i IMAGE   Use a different container image"
+    echo "  -o         OVN drop-sampling mode"
     echo ""
 }
 
+error() {
+    echo $@ > %2
+    exit 1
+}
 is_command_fail() {
 	set +e
 	local cmd=$1
@@ -56,7 +65,7 @@ if [ $# -lt 1 ]; then
     exit 1
 fi
 
-while getopts ":hi:" opt; do
+while getopts ":hoi:" opt; do
     case ${opt} in
         h)
             usage
@@ -64,6 +73,9 @@ while getopts ":hi:" opt; do
             ;;
         i)
             IMAGE=$OPTARG
+            ;;
+        o)
+            MODE="ovn"
             ;;
     esac
 done
@@ -83,12 +95,23 @@ is_command_fail j2
 
 $KUBECTL get node $NODE &>/dev/null || "kubectl cannot access node $NODE. Ensure the node name is correct and you have access to the cluster (KUBECONFIG)"
 
-mkdir -p ${SCRIPT_PATH}/build
+if [[ ${MODE} == "ovn" ]]; then
+    IFS=" " read -a ovn_db_hosts <<<"$(${KUBECTL} get ep -n ${OVN_K8S_NAMESPACE} ovnkube-db -o=jsonpath='{range .subsets[0].addresses[*]}{.ip}{" "}')"
+    if [[ ${#ovn_db_hosts[@]} == 0 ]]; then
+        error "Cannot determine ovn endpoint"
+    fi
+    OVN_CENTRAL=${ovn_db_hosts[0]}
+fi
+
+deployment=$(uuidgen | cut -d "-" -f 1)
 node=${NODE} \
     image=${IMAGE} \
+    ovn_central=${OVN_CENTRAL} \
+    mode=${MODE} \
+    deployment=${deployment} \
     j2 ${TEMPLATE} -o ${POD_SPEC}
 
-$KUBECTL label nodes --overwrite ${NODE} flowmon=true
+$KUBECTL label nodes --overwrite ${NODE} flowmon=${deployment}
 
 $KUBECTL apply -f ${POD_SPEC}
 

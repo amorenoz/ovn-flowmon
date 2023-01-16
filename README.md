@@ -12,25 +12,47 @@ Implemented using [tview](https://github.com/rivo/tview) (for graphics) and [gof
 
 ## Usage
 
-### Built-in OvS Exporter configuration
-There is a built-in OvS configuration module. If there is an OvS instance running locally, start the Flow Monitor using the "-ovsdb" option:
+    ovs-flowmon help
 
-    ./build/ovs-flowmon -ovsdb unix:/var/run/openvswitch/db.sock
+### OVS mode: Built-in OvS Exporter configuration
+There is a built-in OvS configuration module. You can connect to a running OvS by using the `ovs` subcommand.
+For locally running OvS:
+
+    ./build/ovs-flowmon ovs unix:/var/run/openvswitch/db.sock
+
+For a remote OvS, you can expose the OVSDB on a specific port:
+
+    Where the ovsdb-server is running, execute:
+
+    ovs-appctl -t ovsdb-server ovsdb-server/add-remote ptcp:6999
+
+    Then run `ovs-flowmon` with:
+
+    ./build/ovs-flowmon ovs tcp:172.18.0.5:6999
 
 In the UI, you'll see a button to Start, Stop and (re)Configure the OvS IPFIX Exporter.
 
-### Manual configuration
-If you are using an exporter other than OvS or it is not trivial how the exporter will access the collector (e.g. it's behind a router of some kind), you can start the Flow Monitor and manually configure the exporter.
+### Listen mode: Manual configuration of the exporter
+If you are using an exporter other than OvS or it is not trivial how the exporter will access the collector, you can start the Flow Monitor and manually configure the exporter.
 
 In that case, start the ovs-flowmon daemon without any option
 
-    ./build/ovs-flowmon
+    ./build/ovs-flowmon listen
 
 The collector will listen on ::2055. Now you can configure your exporter to export flows to that address. For OvS, you can run something like:
 
     ovs-vsctl -- set Bridge br-int ipfix=@i -- --id=@i create IPFIX targets=\"OVS_FLOWMON_IP:2055\" sampling=200
 
 Where OVS_FLOWMON_IP is the IP Address where ovs-flowmon can be reached.
+
+
+### OVN mode (Experimental): Sample OVN drops
+OVN mode interacts with a running OVN cluster and configures drop-sampling mode. Also, it can add the correspondent per-flow IPFIX sampling configuration a running OvS.
+
+The result is the ability to visualize the packets that are dropped by OVN as well as the LogicalFlows, stages, etc that caused the drop.
+Example:
+
+     ./build/ovs-flowmon ovn --nbdb tcp:172.18.0.4:6641 --sbdb  tcp:172.18.0.4:6642 --ovs unix:/var/run/openvswitch/db.sock
 
 
 ## Aggregates
@@ -74,7 +96,13 @@ If you just want to see how much traffic is hitting IP_B you can add SrcAddr to 
 
 Use the deploy script to deploy the monitor in the node you want to monitor:
 
-    ./deploy.sh [ -i NON_DEFAULT_IMAGE ] NODE_NAME
+    ./deploy.sh [ -i NON_DEFAULT_IMAGE ] [-o] NODE_NAME
+
+#### OVN mode
+
+To deploy the flow monitor in OVN drop-sampling mode, run
+
+    ./deploy.sh -o NODE_NAME
 
 
 To clean the deployment simply delete the ovs-flowmon pod:

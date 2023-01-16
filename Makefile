@@ -15,7 +15,7 @@ prepare:
 
 .PHONY: build
 build: prepare
-	@go build -o $(OUTPUT) cmd/ovs-flowmon/main.go
+	@go build -o $(OUTPUT)
 
 .PHONY: image
 image:

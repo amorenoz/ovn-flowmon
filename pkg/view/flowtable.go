@@ -10,6 +10,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 	flowmessage "github.com/netsampler/goflow2/pb"
 	"github.com/rivo/tview"
+	"github.com/sirupsen/logrus"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -21,6 +22,48 @@ const ModeColsKeys SelectMode = 2 // Only Flow Key columns are selectable
 
 const ProcessedMessagesStat string = "Processed Messages"
 
+var fieldList []string = []string{
+	"InIf",
+	"OutIf",
+	"SrcMac",
+	"DstMac",
+	"VlanID",
+	"Etype",
+	"SrcAddr",
+	"DstAddr",
+	"Proto",
+	"SrcPort",
+	"DstPort",
+	"SvcPort",
+	"FlowDirection"}
+
+var ovnFieldList []string = []string{
+	"LFUUID",
+	"LFMatch",
+	"LFActions",
+	"LFPipeline",
+	"LFStage",
+	"DPType",
+	"DPName",
+	"OFTable",
+}
+
+// FlowConsumer implementes the netflow.Consumer interface and adds the flowmessages
+// to a FlowTable
+type FlowConsumer struct {
+	FlowTable *FlowTable
+	App       *tview.Application
+}
+
+// Consume adds the flowmessage to the FlowTable
+func (fc *FlowConsumer) Consume(msg *flowmessage.FlowMessage, extra map[string]interface{}, log *logrus.Logger) {
+	fc.FlowTable.ProcessMessage(msg, extra)
+	fc.App.QueueUpdateDraw(func() {
+		fc.FlowTable.Draw()
+	})
+}
+
+// FlowTable is in charge of managing a table of flows with aggregates.
 type FlowTable struct {
 	View  *tview.Table
 	stats stats.StatsBackend
@@ -43,35 +86,46 @@ type FlowTable struct {
 	nMessages int
 }
 
-func NewFlowTable(fields []string, aggregates map[string]bool, statsBackend stats.StatsBackend) *FlowTable {
-	aggregateKeyList := []string{}
-	for _, field := range fields {
-		if aggregates[field] {
-			aggregateKeyList = append(aggregateKeyList, field)
-		}
-	}
+func NewFlowTable() *FlowTable {
+	fields := fieldList
 	tableView := tview.NewTable().
 		SetSelectable(true, false). // Allow flows to be selected
 		SetFixed(1, 1).             // Make it always focus the top left
 		SetSelectable(true, false)  // Start in RowMode
 
-	if statsBackend != nil {
-		statsBackend.RegisterStat(ProcessedMessagesStat)
-	}
-
-	return &FlowTable{
+	ft := &FlowTable{
 		View:             tableView,
-		stats:            statsBackend,
+		stats:            nil,
 		mutex:            sync.RWMutex{},
 		flows:            make([]*flowmon.FlowInfo, 0),
 		aggregates:       make([]*flowmon.FlowAggregate, 0),
-		aggregateKeyList: aggregateKeyList,
-		aggregateKeyMap:  aggregates,
+		aggregateKeyList: nil,
+		aggregateKeyMap:  nil,
 		keys:             fields,
 		lessFunc: func(one, other *flowmon.FlowAggregate) bool {
 			return one.LastTimeReceived < other.LastTimeReceived
 		},
 	}
+	ft.updateFieldsLocked()
+	return ft
+}
+
+func (ft *FlowTable) SetStatsBackend(statsBackend stats.StatsBackend) *FlowTable {
+	statsBackend.RegisterStat(ProcessedMessagesStat)
+	ft.stats = statsBackend
+	return ft
+}
+
+func (ft *FlowTable) SetOVN(ovn bool) *FlowTable {
+	if ovn {
+		for _, field := range ovnFieldList {
+			ft.keys = append(ft.keys, field)
+		}
+	}
+	ft.mutex.Lock()
+	defer ft.mutex.Unlock()
+	ft.updateFieldsLocked()
+	return ft
 }
 
 func (ft *FlowTable) GetAggregates() map[string]bool {
@@ -197,10 +251,10 @@ func (ft *FlowTable) Draw() {
 	ft.stats.Draw()
 }
 
-func (ft *FlowTable) ProcessMessage(msg *flowmessage.FlowMessage) {
+func (ft *FlowTable) ProcessMessage(msg *flowmessage.FlowMessage, extra map[string]interface{}) {
 	log.Debugf("Processing Flow Message: %+v", msg)
 
-	flowInfo := flowmon.NewFlowInfo(msg)
+	flowInfo := flowmon.NewFlowInfo(msg, extra)
 	ft.flows = append(ft.flows, flowInfo)
 
 	ft.mutex.Lock()
@@ -235,18 +289,6 @@ func (ft *FlowTable) ProcessFlow(flowInfo *flowmon.FlowInfo) {
 
 		// Sorted insertion
 		ft.insertSortedAggregate(newAgg)
-	}
-}
-
-func (ft *FlowTable) insertSortedAggregate(agg *flowmon.FlowAggregate) {
-	insertionPoint := sort.Search(len(ft.aggregates), func(i int) bool {
-		return ft.lessFunc(ft.aggregates[i], agg)
-	})
-	if insertionPoint == len(ft.aggregates) {
-		ft.aggregates = append(ft.aggregates, agg)
-	} else {
-		ft.aggregates = append(ft.aggregates[0:insertionPoint],
-			append([]*flowmon.FlowAggregate{agg}, ft.aggregates[insertionPoint:]...)...)
 	}
 }
 
@@ -306,10 +348,35 @@ func (ft *FlowTable) SetSortingKey(key string) error {
 	return nil
 }
 
+func (ft *FlowTable) insertSortedAggregate(agg *flowmon.FlowAggregate) {
+	insertionPoint := sort.Search(len(ft.aggregates), func(i int) bool {
+		return ft.lessFunc(ft.aggregates[i], agg)
+	})
+	if insertionPoint == len(ft.aggregates) {
+		ft.aggregates = append(ft.aggregates, agg)
+	} else {
+		ft.aggregates = append(ft.aggregates[0:insertionPoint],
+			append([]*flowmon.FlowAggregate{agg}, ft.aggregates[insertionPoint:]...)...)
+	}
+}
+
 // Recompute all aggregates
 func (ft *FlowTable) recompute() {
 	ft.aggregates = make([]*flowmon.FlowAggregate, 0)
 	for _, flow := range ft.flows {
 		ft.ProcessFlow(flow)
 	}
+}
+
+func (ft *FlowTable) updateFieldsLocked() {
+	aggregateKeyList := []string{}
+	aggregates := map[string]bool{}
+	for _, field := range ft.keys {
+		aggregateKeyList = append(aggregateKeyList, field)
+		if _, ok := aggregates[field]; !ok {
+			aggregates[field] = true
+		}
+	}
+	ft.aggregateKeyList = aggregateKeyList
+	ft.aggregateKeyMap = aggregates
 }
